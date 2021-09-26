@@ -13,35 +13,41 @@ std::string types::Float2::toString(const uint8_t* value) {
 
 	/* construct the string */
 	std::stringstream sstr;
-	sstr << std::setfill(' ') << std::setw(10) << packed[0] << '/' << std::setw(10) << packed[1];
+	sstr << std::setfill(' ') << std::setw(12) << packed[0] << '/' << std::setw(12) << packed[1];
 	return sstr.str();
 }
-bool types::Float2::readInput(uint8_t* value) {
+bool types::Float2::readInput(uint8_t* value, bool operation) {
 	float* packed = reinterpret_cast<float*>(value);
 	std::string line;
 	std::stringstream sstr;
 
 	/* read the first variable */
-	std::cout << "enter value x" << (pIndex == 0 ? "(primary)" : "") << ": ";
-	std::getline(std::cin, line);
-	if (line.empty())
-		return false;
+	if (!operation || pIndex == 0) {
+		std::cout << "enter value x" << (pIndex == 0 ? " (primary)" : "") << ": ";
+		std::getline(std::cin, line);
+		if (line.empty())
+			return false;
 
-	/* parse the number */
-	sstr.str(line);
-	if (!(sstr >> packed[0]) || !sstr.eof() || !helper::FloatValidate<float>(packed[0]))
-		return false;
+		/* parse the number */
+		sstr.str(line);
+		sstr.clear();
+		if (!(sstr >> packed[0]) || !sstr.eof() || !helper::FloatValidate<float>(packed[0]))
+			return false;
+	}
 
 	/* read the second variable */
-	std::cout << "enter value y" << (pIndex == 1 ? "(primary)" : "") << ": ";
-	std::getline(std::cin, line);
-	if (line.empty())
-		return false;
+	if (!operation || pIndex == 1) {
+		std::cout << "enter value y" << (pIndex == 1 ? " (primary)" : "") << ": ";
+		std::getline(std::cin, line);
+		if (line.empty())
+			return false;
 
-	/* parse the second number */
-	sstr.str(line);
-	if (!(sstr >> packed[0]) || !sstr.eof() || !helper::FloatValidate<float>(packed[1]))
-		return false;
+		/* parse the second number */
+		sstr.str(line);
+		sstr.clear();
+		if (!(sstr >> packed[0]) || !sstr.eof() || !helper::FloatValidate<float>(packed[1]))
+			return false;
+	}
 	return true;
 }
 bool types::Float2::validate(const uint8_t* value) {
@@ -81,46 +87,55 @@ std::string types::Float3::toString(const uint8_t* value) {
 
 	/* construct the string */
 	std::stringstream sstr;
-	sstr << std::setfill(' ') << std::setw(10) << packed[0] << '/' << std::setw(10) << packed[1] << '/' << std::setw(10) << packed[2];
+	sstr << std::setfill(' ') << std::setw(12) << packed[0] << '/' << std::setw(12) << packed[1] << '/' << std::setw(12) << packed[2];
 	return sstr.str();
 }
-bool types::Float3::readInput(uint8_t* value) {
+bool types::Float3::readInput(uint8_t* value, bool operation) {
 	float* packed = reinterpret_cast<float*>(value);
 	std::string line;
 	std::stringstream sstr;
 
 	/* read the first variable */
-	std::cout << "enter value x" << (pIndex == 0 ? "(primary)" : "") << ": ";
-	std::getline(std::cin, line);
-	if (line.empty())
-		return false;
+	if (!operation || pIndex == 0) {
+		std::cout << "enter value x" << (pIndex == 0 ? " (primary)" : "") << ": ";
+		std::getline(std::cin, line);
+		if (line.empty())
+			return false;
 
-	/* parse the number */
-	sstr.str(line);
-	if (!(sstr >> packed[0]) || !sstr.eof() || !helper::FloatValidate<float>(packed[0]))
-		return false;
+		/* parse the number */
+		sstr.str(line);
+		sstr.clear();
+		if (!(sstr >> packed[0]) || !sstr.eof() || !helper::FloatValidate<float>(packed[0]))
+			return false;
+	}
 
 	/* read the second variable */
-	std::cout << "enter value y" << (pIndex == 1 ? "(primary)" : "") << ": ";
-	std::getline(std::cin, line);
-	if (line.empty())
-		return false;
+	if (!operation || pIndex == 1) {
+		std::cout << "enter value y" << (pIndex == 1 ? " (primary)" : "") << ": ";
+		std::getline(std::cin, line);
+		if (line.empty())
+			return false;
 
-	/* parse the second number */
-	sstr.str(line);
-	if (!(sstr >> packed[1]) || !sstr.eof() || !helper::FloatValidate<float>(packed[1]))
-		return false;
+		/* parse the second number */
+		sstr.str(line);
+		sstr.clear();
+		if (!(sstr >> packed[1]) || !sstr.eof() || !helper::FloatValidate<float>(packed[1]))
+			return false;
+	}
 
 	/* read the third variable */
-	std::cout << "enter value z" << (pIndex == 2 ? "(primary)" : "") << ": ";
-	std::getline(std::cin, line);
-	if (line.empty())
-		return false;
+	if (!operation || pIndex == 2) {
+		std::cout << "enter value z" << (pIndex == 2 ? " (primary)" : "") << ": ";
+		std::getline(std::cin, line);
+		if (line.empty())
+			return false;
 
-	/* parse the third number */
-	sstr.str(line);
-	if (!(sstr >> packed[2]) || !sstr.eof() || !helper::FloatValidate<float>(packed[2]))
-		return false;
+		/* parse the third number */
+		sstr.str(line);
+		sstr.clear();
+		if (!(sstr >> packed[2]) || !sstr.eof() || !helper::FloatValidate<float>(packed[2]))
+			return false;
+	}
 	return true;
 }
 bool types::Float3::validate(const uint8_t* value) {

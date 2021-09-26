@@ -9,7 +9,7 @@ types::Bool::Bool() : Datatype(sizeof(bool), sizeof(bool), "bool", true) {}
 std::string types::Bool::toString(const uint8_t* value) {
 	return std::to_string(*value);
 }
-bool types::Bool::readInput(uint8_t* value) {
+bool types::Bool::readInput(uint8_t* value, bool operation) {
 	/* read the line from the input */
 	std::cout << "enter a value (0/1): ";
 	std::string line;
@@ -19,7 +19,11 @@ bool types::Bool::readInput(uint8_t* value) {
 
 	/* parse the number */
 	std::stringstream sstr(line);
-	return (sstr >> *value) && sstr.eof() && *value <= 1;
+	uint32_t temp = 0;
+	if (!(sstr >> temp) || !sstr.eof() || temp > 1)
+		return false;
+	*value = static_cast<uint8_t>(temp);
+	return true;
 }
 bool types::Bool::validate(const uint8_t* value) {
 	return *value <= 1;
@@ -62,13 +66,13 @@ std::string types::String::toString(const uint8_t* value) {
 		++len;
 	return std::move(std::string(reinterpret_cast<const char*>(value), len));
 }
-bool types::String::readInput(uint8_t* value) {
+bool types::String::readInput(uint8_t* value, bool operation) {
 	std::string line;
 
 	/* read the input */
 	std::cout << "enter a string (max " << (pTerminated ? "63" : "64") << "): ";
 	std::getline(std::cin, line);
-	if (line.empty() == 0)
+	if (line.empty())
 		return false;
 
 	/* validate the input */
@@ -77,6 +81,7 @@ bool types::String::readInput(uint8_t* value) {
 
 	/* copy the string into the buffer */
 	std::memcpy(value, line.data(), std::min(line.size() + 1, static_cast<size_t>(64)));
+	return true;
 }
 bool types::String::validate(const uint8_t* value) {
 	return fValidate(reinterpret_cast<const char*>(value));

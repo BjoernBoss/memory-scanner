@@ -1,13 +1,14 @@
 #include <common/menu.h>
 
 int main() {
-	//create the menu-object
-	MenuStruct* menu = MenuStruct::acquire(true, menuGlobalLoad);
+	/* create the menu object */
+	menu::Host* host = menu::Host::acquire(true);
 	
-	//run the menu
-	menu->run(menuroot::menuID);
+	/* run the menu-instance */
+	MenuInstance instance;
+	host->run(&instance);
 
-	//release the menu and return
-	menu->release();
+	/* release the menu */
+	host->release();
 	return 0;
 }

@@ -26,13 +26,13 @@ namespace types {
 
 			/* check if one of the variables is zero, in which case the comparison does not work */
 			if (a == static_cast<Type>(0.0f))
-				return std::abs(b) <= p;
+				return std::abs(b) <= Precision;
 			if (b == static_cast<Type>(0.0f))
-				return std::abs(a) <= p;
+				return std::abs(a) <= Precision;
 
 			/* compare the actual value */
-			const float _a = std::abs(a);
-			const float _b = std::abs(b);
+			const Type _a = std::abs(a);
+			const Type _b = std::abs(b);
 			return std::abs(a - b) <= std::min(_a, _b) * Precision;
 		}
 	}
@@ -47,7 +47,7 @@ namespace types {
 		std::string toString(const uint8_t* value) override {
 			return std::to_string(*reinterpret_cast<const Type*>(value));
 		}
-		bool readInput(uint8_t* value) override {
+		bool readInput(uint8_t* value, bool operation) override {
 			/* read the line from the input */
 			std::cout << "enter a value: ";
 			std::string line;
@@ -101,7 +101,7 @@ namespace types {
 
 	public:
 		std::string toString(const uint8_t* value) override;
-		bool readInput(uint8_t* value) override;
+		bool readInput(uint8_t* value, bool operation) override;
 		bool validate(const uint8_t* value) override;
 		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
 	};
@@ -116,7 +116,7 @@ namespace types {
 
 	public:
 		std::string toString(const uint8_t* value) override;
-		bool readInput(uint8_t* value) override;
+		bool readInput(uint8_t* value, bool operation) override;
 		bool validate(const uint8_t* value) override;
 		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
 	};

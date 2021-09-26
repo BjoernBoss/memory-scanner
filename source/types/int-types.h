@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <type_traits>
 
 namespace types {
 	/* define the int type */
@@ -16,7 +17,7 @@ namespace types {
 		std::string toString(const uint8_t* value) override {
 			return std::to_string(*reinterpret_cast<const Type*>(value));
 		}
-		bool readInput(uint8_t* value) override {
+		bool readInput(uint8_t* value, bool operation) override {
 			/* read the line from the input */
 			std::cout << "enter a value: ";
 			std::string line;
@@ -26,7 +27,11 @@ namespace types {
 
 			/* parse the number */
 			std::stringstream sstr(line);
-			return (sstr >> *reinterpret_cast<Type*>(value)) && sstr.eof();
+			std::conditional_t<std::is_signed_v<Type>, int64_t, uint64_t> temp = 0;
+			if (!(sstr >> temp) || !sstr.eof())
+				return false;
+			*reinterpret_cast<Type*>(value) = static_cast<Type>(temp);
+			return true;
 		}
 		bool validate(const uint8_t* value) override {
 			return true;

@@ -10,7 +10,7 @@ namespace types {
 
 	public:
 		std::string toString(const uint8_t* value) override;
-		bool readInput(uint8_t* value) override;
+		bool readInput(uint8_t* value, bool operation) override;
 		bool validate(const uint8_t* value) override;
 		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
 	};
@@ -28,7 +28,7 @@ namespace types {
 
 	public:
 		std::string toString(const uint8_t* value) override;
-		bool readInput(uint8_t* value) override;
+		bool readInput(uint8_t* value, bool operation) override;
 		bool validate(const uint8_t* value) override;
 		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
 	};
