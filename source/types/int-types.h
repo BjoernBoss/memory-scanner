@@ -1,90 +1,56 @@
 #pragma once
-#include "datatype.h"
 
-//define the int8-datatype
-struct typeint8
-{
-	//define the acquire-function
-	static datatype acquire();
+#include <common/datatype.h>
 
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
+#include <iostream>
+#include <sstream>
 
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
+namespace types {
+	/* define the int type */
+	template <class Type>
+	class Int : public Datatype {
+	public:
+		Int();
 
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
+	public:
+		std::string toString(const uint8_t* value) override {
+			return std::to_string(*reinterpret_cast<const Type*>(value));
+		}
+		bool readInput(uint8_t* value) override {
+			/* read the line from the input */
+			std::cout << "enter a value: ";
+			std::string line;
+			std::getline(std::cin, line);
+			if (line.empty())
+				return false;
 
-//define the int16-datatype
-struct typeint16
-{
-	//define the acquire-function
-	static datatype acquire();
+			/* parse the number */
+			std::stringstream sstr(line);
+			return (sstr >> *reinterpret_cast<Type*>(value)) && sstr.eof();
+		}
+		bool validate(const uint8_t* value) override {
+			return true;
+		}
+		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override {
+			const Type& a = *reinterpret_cast<const Type*>(value);
+			const Type& b = *reinterpret_cast<const Type*>(compareto);
 
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
-
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
-
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
-
-//define the int32-datatype
-struct typeint32
-{
-	//define the acquire-function
-	static datatype acquire();
-
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
-
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
-
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
-
-//define the int64-datatype
-struct typeint64
-{
-	//define the acquire-function
-	static datatype acquire();
-
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
-
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
-
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
+			/* handle the separate operations */
+			switch (operation) {
+			case Operation::equal:
+				return a == b;
+			case Operation::unequal:
+				return a != b;
+			case Operation::less:
+				return a < b;
+			case Operation::lessEqual:
+				return a <= b;
+			case Operation::greaterEqual:
+				return a >= b;
+			case Operation::greater:
+				return a > b;
+			}
+			return false;
+		}
+	};
+}

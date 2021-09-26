@@ -1,259 +1,111 @@
-#include "extra_types.h"
+#include "extra-types.h"
 
-//implementation of the functions - bool
-datatype typebool::acquire()
-{
-	//create the new object
-	datatype type = datatype();
+#include <iostream>
+#include <sstream>
+#include <algorithm>
 
-	//set the attributes used to describe the datatype
-	type.size = sizeof(bool);
-	type.addr_alignment = sizeof(bool);
-	type.name = "bool";
-	type.restricted = true;
-	type.tostring = typebool::tostring;
-
-	//set the function to read input
-	type.readinput = typebool::readinput;
-
-	//set the test-functions
-	type.validate = typebool::validate;
-	type.test_equal = typebool::test_equal;
-	type.test_unequal = typebool::test_unequal;
-	type.test_less = 0;
-	type.test_less_equal = 0;
-	type.test_greater_equal = 0;
-	type.test_greater = 0;
-
-	//return the type
-	return type;
+/* implement the boolean type */
+types::Bool::Bool() : Datatype(sizeof(bool), sizeof(bool), "bool", true) {}
+std::string types::Bool::toString(const uint8_t* value) {
+	return std::to_string(*value);
 }
-std::string typebool::tostring(uint8_t* value)
-{
-	//convert the value to a string
-	std::stringstream sstr;
-	sstr << *(bool*)value;
-	return sstr.str();
-}
-bool typebool::readinput(uint8_t* buffer)
-{
-	//read the input
-	std::cout << "enter a value: ";
-	std::string str;
-	std::getline(std::cin, str);
-	if (str.size() == 0)
+bool types::Bool::readInput(uint8_t* value) {
+	/* read the line from the input */
+	std::cout << "enter a value (0/1): ";
+	std::string line;
+	std::getline(std::cin, line);
+	if (line.empty())
 		return false;
 
-	//convert the input to a number
-	std::stringstream sstr(str);
-	bool value;
-	sstr >> value;
-	if (!sstr.eof() || !validate((uint8_t*)&value))
-		return false;
-
-	//set the value
-	*(bool*)buffer = value;
-	return true;
+	/* parse the number */
+	std::stringstream sstr(line);
+	return (sstr >> *value) && sstr.eof() && *value <= 1;
 }
-bool typebool::validate(uint8_t* value)
-{
+bool types::Bool::validate(const uint8_t* value) {
+	return *value <= 1;
+}
+bool types::Bool::test(const uint8_t* value, const uint8_t* compareto, Operation operation) {
+	/* check if the value is valid (compareto is expected to be valid) */
 	if (*value > 1)
 		return false;
-	return true;
-}
-bool typebool::test_equal(uint8_t* value, uint8_t* compareto)
-{
-	if (*value > 1)
-		return false;
-	if (*value == *compareto)
-		return true;
-	return false;
-}
-bool typebool::test_unequal(uint8_t* value, uint8_t* compareto)
-{
-	if (*value > 1)
-		return false;
-	if (*value != *compareto)
-		return true;
+
+	/* handle the separate operations */
+	switch (operation) {
+	case Operation::equal:
+		return *value == *compareto;
+	case Operation::unequal:
+		return *value != *compareto;
+	}
 	return false;
 }
 
-//implementation of the functions - string
-datatype typestring::acquire()
-{
-	//create the new object
-	datatype type = datatype();
-
-	//set the attributes used to describe the datatype
-	type.size = sizeof(char) * 64;
-	type.addr_alignment = 1;
-	type.name = "string";
-	type.restricted = true;
-	type.tostring = typestring::tostring;
-
-	//set the function to read input
-	type.readinput = typestring::readinput;
-
-	//set the test-functions
-	type.validate = typestring::validate;
-	type.test_equal = typestring::test_equal;
-	type.test_unequal = typestring::test_unequal;
-	type.test_less = 0;
-	type.test_less_equal = 0;
-	type.test_greater_equal = 0;
-	type.test_greater = 0;
-
-	//return the type
-	return type;
-}
-std::string typestring::tostring(uint8_t* value)
-{
-	//convert the value to a string
-	std::stringstream sstr;
-	for (uint64_t i = 0; i < 64; i++) {
+/* implement the string types */
+types::String::String(bool term) : Datatype(sizeof(char) * 64, sizeof(char), term ? "string-term" : "string", true), pTerminated(term) {}
+bool types::String::fValidate(const char* value) const {
+	/* iterate through the characters and validate them */
+	for (size_t i = 0; i < 64; i++) {
 		if (value[i] == 0)
-			break;
-		else
-			sstr << value[i];
+			return i > 0;
+		if (value[i] < 0x20 || value[i] == 0x7f)
+			return false;
 	}
-	return sstr.str();
+	return !pTerminated;
 }
-bool typestring::readinput(uint8_t* buffer)
-{
-	//read the input
-	std::cout << "enter a string (max 64): ";
-	std::string str;
-	std::getline(std::cin, str);
-	if (str.size() == 0 || str.size() > 64)
+std::string types::String::toString(const uint8_t* value) {
+	/* check if the length needs to be determined */
+	if (pTerminated)
+		return reinterpret_cast<const char*>(value);
+
+	/* determine the length of the string */
+	size_t len = 0;
+	while (value[len] && len < 64)
+		++len;
+	return std::move(std::string(reinterpret_cast<const char*>(value), len));
+}
+bool types::String::readInput(uint8_t* value) {
+	std::string line;
+
+	/* read the input */
+	std::cout << "enter a string (max " << (pTerminated ? "63" : "64") << "): ";
+	std::getline(std::cin, line);
+	if (line.empty() == 0)
 		return false;
 
-	//set the string
-	memcpy(buffer, str.c_str(), (str.size() < 64 ? str.size() + 1 : str.size()));
-	return true;
+	/* validate the input */
+	if (!fValidate(line.c_str()))
+		return false;
+
+	/* copy the string into the buffer */
+	std::memcpy(value, line.data(), std::min(line.size() + 1, static_cast<size_t>(64)));
 }
-bool typestring::validate(uint8_t* value)
-{
-	//validate the characters
-	for (uint64_t i = 0; i < 64; i++) {
+bool types::String::validate(const uint8_t* value) {
+	return fValidate(reinterpret_cast<const char*>(value));
+}
+bool types::String::test(const uint8_t* value, const uint8_t* compareto, Operation operation) {
+	/* check if the value is valid (compareto is expected to be valid) */
+	if (!fValidate(reinterpret_cast<const char*>(value)))
+		return false;
+
+	/* check if the two strings are considered equal */
+	bool equal = true;
+	for (size_t i = 0; i < 64; i++) {
 		if (value[i] == 0) {
-			if (i == 0)
-				return false;
-			return true;
-		}
-		else if (value[i] < 0x20 || value[i] == 0x7f)
-			return false;
-	}
-	return true;
-}
-bool typestring::test_equal(uint8_t* value, uint8_t* compareto)
-{
-	if (!validate(value))
-		return false;
-	for (uint64_t i = 0; i < 64; i++) {
-		if (compareto[i] == 0)
-			return true;
-		if (compareto[i] != value[i])
-			return false;
-	}
-	return true;
-}
-bool typestring::test_unequal(uint8_t* value, uint8_t* compareto)
-{
-	if (!validate(value))
-		return false;
-	for (uint64_t i = 0; i < 64; i++) {
-		if (compareto[i] == 0)
-			return false;
-		if (compareto[i] != value[i])
-			return true;
-	}
-	return false;
-}
-
-//implementation of the functions - stringTerm
-datatype typestringTerm::acquire()
-{
-	//create the new object
-	datatype type = datatype();
-
-	//set the attributes used to describe the datatype
-	type.size = sizeof(char) * 64;
-	type.addr_alignment = 1;
-	type.name = "stringTerm";
-	type.restricted = true;
-	type.tostring = typestringTerm::tostring;
-
-	//set the function to read input
-	type.readinput = typestringTerm::readinput;
-
-	//set the test-functions
-	type.validate = typestringTerm::validate;
-	type.test_equal = typestringTerm::test_equal;
-	type.test_unequal = typestringTerm::test_unequal;
-	type.test_less = 0;
-	type.test_less_equal = 0;
-	type.test_greater_equal = 0;
-	type.test_greater = 0;
-
-	//return the type
-	return type;
-}
-std::string typestringTerm::tostring(uint8_t* value)
-{
-	//convert the value to a stringTerm
-	std::stringstream sstr;
-	for (uint64_t i = 0; i < 64; i++) {
-		if (value[i] == 0)
+			if (pTerminated && compareto[i] != 0)
+				equal = false;
 			break;
-		else
-			sstr << value[i];
-	}
-	return sstr.str();
-}
-bool typestringTerm::readinput(uint8_t* buffer)
-{
-	//read the input
-	std::cout << "enter a string (max 64): ";
-	std::string str;
-	std::getline(std::cin, str);
-	if (str.size() == 0 || str.size() > 64)
-		return false;
-
-	//set the stringTerm
-	memcpy(buffer, str.c_str(), (str.size() < 64 ? str.size() + 1 : str.size()));
-	return true;
-}
-bool typestringTerm::validate(uint8_t* value)
-{
-	//validate the characters
-	for (uint64_t i = 0; i < 64; i++) {
-		if (value[i] == 0) {
-			if (i == 0)
-				return false;
-			return true;
 		}
-		else if (value[i] < 0x20 || value[i] == 0x7f)
-			return false;
+		if (value[i] == compareto[i])
+			continue;
+		equal = false;
+		break;
 	}
-	return true;
-}
-bool typestringTerm::test_equal(uint8_t* value, uint8_t* compareto)
-{
-	if (!validate(value))
-		return false;
-	for (uint64_t i = 0; i < 64; i++) {
-		if (compareto[i] != value[i])
-			return false;
-	}
-	return true;
-}
-bool typestringTerm::test_unequal(uint8_t* value, uint8_t* compareto)
-{
-	if (!validate(value))
-		return false;
-	for (uint64_t i = 0; i < 64; i++) {
-		if (compareto[i] != value[i])
-			return true;
+
+	/* handle the separate operations */
+	switch (operation) {
+	case Operation::equal:
+		return equal;
+	case Operation::unequal:
+		return !equal;
 	}
 	return false;
 }

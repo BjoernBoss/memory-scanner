@@ -1,157 +1,123 @@
 #pragma once
-#include "datatype.h"
+
+#include <common/datatype.h>
+
+#include <iostream>
+#include <sstream>
 #include <math.h>
 
-//define the float-datatype
-struct typefloat
-{
-	//define the acquire-function
-	static datatype acquire();
+namespace types {
+	namespace helper {
+		/* define the helper function for float validation */
+		template <class Type>
+		static bool FloatValidate(const Type& value) {
+			static constexpr Type Bound = static_cast<Type>(1.0e20f);
+			if (std::isnan<Type>(value) || std::isinf<Type>(value))
+				return false;
 
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
+			/* check if the values is within the bounds */
+			return (value >= -Bound && value <= Bound);
+		}
 
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
+		/* define the helper function for float comparisions */
+		template <class Type>
+		static bool FloatEqual(const Type& a, const Type& b) {
+			static constexpr Type Precision = static_cast<Type>(0.00001f);
 
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
+			/* check if one of the variables is zero, in which case the comparison does not work */
+			if (a == static_cast<Type>(0.0f))
+				return std::abs(b) <= p;
+			if (b == static_cast<Type>(0.0f))
+				return std::abs(a) <= p;
 
-//define the double-datatype
-struct typedouble
-{
-	//define the acquire-function
-	static datatype acquire();
+			/* compare the actual value */
+			const float _a = std::abs(a);
+			const float _b = std::abs(b);
+			return std::abs(a - b) <= std::min(_a, _b) * Precision;
+		}
+	}
 
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
+	/* define the float type */
+	template <class Type>
+	class Float : public Datatype {
+	public:
+		Float();
 
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
+	public:
+		std::string toString(const uint8_t* value) override {
+			return std::to_string(*reinterpret_cast<const Type*>(value));
+		}
+		bool readInput(uint8_t* value) override {
+			/* read the line from the input */
+			std::cout << "enter a value: ";
+			std::string line;
+			std::getline(std::cin, line);
+			if (line.empty())
+				return false;
 
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
+			/* parse the number */
+			std::stringstream sstr(line);
+			if (!(sstr >> *reinterpret_cast<Type*>(value)) || !sstr.eof())
+				return false;
+			return helper::FloatValidate<Type>(*reinterpret_cast<Type*>(value));
+		}
+		bool validate(const uint8_t* value) override {
+			return helper::FloatValidate<Type>(*reinterpret_cast<const Type*>(value));
+		}
+		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override {
+			const Type& a = *reinterpret_cast<const Type*>(value);
+			const Type& b = *reinterpret_cast<const Type*>(compareto);
 
-//define the float2Dx-datatype
-struct typefloat2Dx
-{
-	//define the acquire-function
-	static datatype acquire();
+			/* check if the value is valid (compareto is expected to be valid) */
+			if (!helper::FloatValidate<Type>(a))
+				return false;
 
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
+			/* handle the separate operations */
+			switch (operation) {
+			case Operation::equal:
+				return helper::FloatEqual<Type>(a, b);
+			case Operation::unequal:
+				return !helper::FloatEqual<Type>(a, b);
+			case Operation::less:
+				return a < b;
+			case Operation::lessEqual:
+				return a <= b;
+			case Operation::greaterEqual:
+				return a >= b;
+			case Operation::greater:
+				return a > b;
+			}
+			return false;
+		}
+	};
 
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
+	/* define the 2d-float structure type */
+	class Float2 : public Datatype {
+	private:
+		size_t pIndex;
 
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
+	public:
+		Float2(size_t index);
 
-//define the float2Dy-datatype
-struct typefloat2Dy
-{
-	//define the acquire-function
-	static datatype acquire();
+	public:
+		std::string toString(const uint8_t* value) override;
+		bool readInput(uint8_t* value) override;
+		bool validate(const uint8_t* value) override;
+		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
+	};
 
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
+	/* define the 3d-float structure type */
+	class Float3 : public Datatype {
+	private:
+		size_t pIndex;
 
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
+	public:
+		Float3(size_t index);
 
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
-
-//define the float3Dx-datatype
-struct typefloat3Dx
-{
-	//define the acquire-function
-	static datatype acquire();
-
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
-
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
-
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
-
-//define the float3Dy-datatype
-struct typefloat3Dy
-{
-	//define the acquire-function
-	static datatype acquire();
-
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
-
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
-
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
-
-//define the float3Dz-datatype
-struct typefloat3Dz
-{
-	//define the acquire-function
-	static datatype acquire();
-
-	//define the functions used to describe the datatype
-	static std::string tostring(uint8_t* value);
-
-	//define the function to read input
-	static bool readinput(uint8_t* buffer);
-
-	//define the test-functions
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-	static bool test_less(uint8_t* compareto, uint8_t* value);
-	static bool test_less_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_greater(uint8_t* compareto, uint8_t* value);
-};
+	public:
+		std::string toString(const uint8_t* value) override;
+		bool readInput(uint8_t* value) override;
+		bool validate(const uint8_t* value) override;
+		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
+	};
+}

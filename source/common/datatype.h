@@ -1,45 +1,36 @@
 #pragma once
+
 #include <inttypes.h>
 #include <string>
-#include <iostream>
-#include <sstream>
-#include <Windows.h>
 
-//define the operations
-enum class operationtype : uint8_t
-{
-	validate, 
-	equal, 
-	unequal, 
-	less, 
-	less_equal, 
-	greater_equal, 
-	greater
-};
+/* define the datatype interface */
+class Datatype {
+public:
+	enum class Operation : uint8_t {
+		validate,
+		equal,
+		unequal,
+		less,
+		lessEqual,
+		greaterEqual,
+		greater
+	};
 
-//define the structure describing one datatype
-struct datatype
-{
-	//implement the constructors
-	datatype();
-	~datatype();
+private:
+	uint8_t pSize;
+	uint8_t pAlign;
+	std::string pName;
+	bool pRestricted;
 
-	//define the attributes used to describe the datatype
-	uint8_t size;
-	uint8_t addr_alignment;
-	const char* name;
-	bool restricted;
-	std::string(*tostring)(uint8_t*);
+protected:
+	Datatype(uint8_t size, uint8_t align, const std::string& name, bool restricted);
+	virtual ~Datatype() = default;
+	Datatype(Datatype&&) = delete;
+	Datatype(const Datatype&) = delete;
 
-	//define the function to read input
-	bool(*readinput)(uint8_t*);
-
-	//define the test-functions
-	bool(*validate)(uint8_t*);
-	bool(*test_equal)(uint8_t*, uint8_t*);
-	bool(*test_unequal)(uint8_t*, uint8_t*);
-	bool(*test_less)(uint8_t*, uint8_t*);
-	bool(*test_less_equal)(uint8_t*, uint8_t*);
-	bool(*test_greater_equal)(uint8_t*, uint8_t*);
-	bool(*test_greater)(uint8_t*, uint8_t*);
+public:
+	virtual std::string toString(const uint8_t* value) = 0;
+	virtual bool readInput(uint8_t* value) = 0;
+	virtual bool validate(const uint8_t* value) = 0;
+	virtual bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) = 0;
 };

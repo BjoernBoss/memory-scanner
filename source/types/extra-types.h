@@ -1,38 +1,35 @@
 #pragma once
-#include "datatype.h"
 
-//define the bool-datatype
-struct typebool
-{
-	//define the functions
-	static datatype acquire();
-	static std::string tostring(uint8_t* value);
-	static bool readinput(uint8_t* buffer);
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-};
+#include <common/datatype.h>
 
-//define the string-datatype
-struct typestring
-{
-	//define the functions
-	static datatype acquire();
-	static std::string tostring(uint8_t* value);
-	static bool readinput(uint8_t* buffer);
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-};
+namespace types {
+	/* define the boolean type */
+	class Bool : public Datatype {
+	public:
+		Bool();
 
-//define the stringTerm-datatype
-struct typestringTerm
-{
-	//define the functions
-	static datatype acquire();
-	static std::string tostring(uint8_t* value);
-	static bool readinput(uint8_t* buffer);
-	static bool validate(uint8_t* value);
-	static bool test_equal(uint8_t* compareto, uint8_t* value);
-	static bool test_unequal(uint8_t* compareto, uint8_t* value);
-};
+	public:
+		std::string toString(const uint8_t* value) override;
+		bool readInput(uint8_t* value) override;
+		bool validate(const uint8_t* value) override;
+		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
+	};
+
+	/* define the string types */
+	class String : public Datatype {
+	private:
+		bool pTerminated;
+
+	public:
+		String(bool term);
+
+	private:
+		bool fValidate(const char* value) const;
+
+	public:
+		std::string toString(const uint8_t* value) override;
+		bool readInput(uint8_t* value) override;
+		bool validate(const uint8_t* value) override;
+		bool test(const uint8_t* value, const uint8_t* compareto, Operation operation) override;
+	};
+}
