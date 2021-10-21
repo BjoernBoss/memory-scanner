@@ -20,7 +20,7 @@ function IncludeExtern(name, location)
 	include (path.join(location, name))
 end
 
-local ProjectName = "Memory-Reader"
+local ProjectName = "Memory-Scanner"
 
 workspace(ProjectName)
 	language "C++"
