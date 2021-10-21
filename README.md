@@ -24,13 +24,13 @@ This scanner works on 32 and 64 bit binaries. It can read either only the `stati
 While this program handles most errors, it will not check for allocation failures on the scan-buffers. This means that large scans, which exceed the allocatable memory amount, will case a `Segmentation Fault`. This is due to this project starting as a little helping tool and thereby not having fully integrated and proper error handling.
 
 ## Building the project
-
 This project uses `premake5` as its build system. Example on how to create a `Visual Studio 2019 Solution`.
 
     $ git clone --recursive https://github.com/BjoernBoss/Memory-Scanner.git
     $ cd Memory-Scanner
     $ premake5 vs2019
 
+The solution file is located at `build/Memory-Scanner.sln`.
 
 ## Implementing new datatypes
 New datatypes can easily be added by implementing the `Datatype` interface:
