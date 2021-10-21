@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: BSD-3-Clause
+-- Copyright (c) 2021 Bjoern Boss Henrichsen
 newaction {
 	trigger     = "clean",
 	description = "Remove all build artifacts",
@@ -33,14 +35,10 @@ project(ProjectName)
 	cppdialect "C++17"
 	staticruntime "On"
 	
-	-- include the dependencies
-	links { "Console-Menu" }
-	includedirs { "repos" }
-	
 	targetdir "bin/%{cfg.buildcfg}-%{cfg.architecture}"
 	objdir "build/%{cfg.buildcfg}-%{cfg.architecture}"
 	
-	includedirs { "source" }
+	includedirs { "repos", "source" }
 	files { "source/**.h", "source/**.cpp", "source/**.txt", "source/**.lua", "*.txt", "*.lua" }
 	
 	filter "configurations:debug"
@@ -54,8 +52,11 @@ project(ProjectName)
 		optimize "Full"
 		symbols "On"
 		runtime "Release"
+	
+	filter {}
 
--- define the root directories to be used by the libraries
+-- include the libraries and link against them
+links { "Console-Menu" }
 group "repos"
-	IncludeExtern("console-menu", "repos")
+	IncludeExtern("Console-Menu", "repos")
 group ""

@@ -1,6 +1,8 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+/* Copyright (c) 2021 Bjoern Boss Henrichsen */
 #pragma once
 
-#include <console-menu/console-menu.h>
+#include <Console-Menu/console-menu.h>
 #include <common/datatype.h>
 
 #include <string>

@@ -1,0 +1,3 @@
+[submodule "repos/Console-Menu"]
+	path = repos/Console-Menu
+	url = https://github.com/BjoernBoss/Console-Menu.git

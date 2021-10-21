@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+/* Copyright (c) 2021 Bjoern Boss Henrichsen */
 #include "extra-types.h"
 
 #include <iostream>
