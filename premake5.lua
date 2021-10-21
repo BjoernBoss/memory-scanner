@@ -38,6 +38,7 @@ project(ProjectName)
 	targetdir "bin/%{cfg.buildcfg}-%{cfg.architecture}"
 	objdir "build/%{cfg.buildcfg}-%{cfg.architecture}"
 	
+	links { "Winmm" }
 	includedirs { "repos", "source" }
 	files { "source/**.h", "source/**.cpp", "source/**.txt", "source/**.lua", "*.txt", "*.lua" }
 	

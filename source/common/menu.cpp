@@ -6,7 +6,6 @@
 #include <types/float-types.h>
 #include <types/extra-types.h>
 
-#pragma comment(lib, "Winmm.lib")
 #include <iostream>
 #include <Psapi.h>
 #include <fstream>
