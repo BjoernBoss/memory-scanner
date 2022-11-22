@@ -1,2 +1,11 @@
-build/*
-bin/*
+.vscode/
+bin/
+
+.vs/
+*.obj
+*.tlog
+*.recipe
+*.ilk
+*.log
+*.idb
+*.pdb
