@@ -20,7 +20,7 @@ function IncludeExtern(name, location)
 	include (path.join(location, name))
 end
 
-local ProjectName = "Memory-Scanner"
+local ProjectName = "memory-scanner"
 
 workspace(ProjectName)
 	language "C++"
@@ -57,7 +57,7 @@ project(ProjectName)
 	filter {}
 
 -- include the libraries and link against them
-links { "Console-Menu" }
+links { "console-menu" }
 group "repos"
-	IncludeExtern("Console-Menu", "repos")
+	IncludeExtern("console-menu", "repos")
 group ""

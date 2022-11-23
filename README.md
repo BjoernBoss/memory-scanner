@@ -2,7 +2,7 @@
 ![C++](https://img.shields.io/badge/language-c%2B%2B-blue?style=flat-square)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-brightgreen?style=flat-square)](LICENSE.txt)
 
-Small and simple memory scanner designed to work on Windows and to be used on applications that capture the mouse/cannot be paused (for example: games). To achieve this it uses [Console-Menu](https://github.com/BjoernBoss/Console-Menu), which allows to control the user interface in the console either as usual or via `CTRL + NumPad`. This scanner works entirely from outside of the binary to scan. It only reads the binary executable file and uses the system calls `OpenProcess`, `ReadProcessMemory`, and `WriteProcessMemory` on the running process. It does not inject source code or attach a debugger.
+Small and simple memory scanner designed to work on Windows and to be used on applications that capture the mouse/cannot be paused (for example: games). To achieve this it uses [console-menu](https://github.com/BjoernBoss/console-menu), which allows to control the user interface in the console either as usual or via `CTRL + NumPad`. This scanner works entirely from outside of the binary to scan. It only reads the binary executable file and uses the system calls `OpenProcess`, `ReadProcessMemory`, and `WriteProcessMemory` on the running process. It does not inject source code or attach a debugger.
 
 This Memory scanner supports the following datatypes:
 
@@ -26,11 +26,11 @@ While this program handles most errors, it will not check for allocation failure
 ## Building the project
 This project uses `premake5` as its build system. Example on how to create a `Visual Studio 2019 Solution`.
 
-    $ git clone --recursive https://github.com/BjoernBoss/Memory-Scanner.git
-    $ cd Memory-Scanner
+    $ git clone --recursive https://github.com/BjoernBoss/memory-scanner.git
+    $ cd memory-scanner
     $ premake5 vs2019
 
-The solution file is located at `build/Memory-Scanner.sln`.
+The solution file is located at `build/memory-scanner.sln`.
 
 ## Implementing new datatypes
 New datatypes can easily be added by implementing the `Datatype` interface:

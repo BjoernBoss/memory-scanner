@@ -2,7 +2,7 @@
 /* Copyright (c) 2021 Bjoern Boss Henrichsen */
 #pragma once
 
-#include <Console-Menu/console-menu.h>
+#include <console-menu/console-menu.h>
 #include <common/datatype.h>
 
 #include <string>
