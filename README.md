@@ -30,7 +30,7 @@ This project uses `premake5` as its build system. Example on how to create a `Vi
     $ cd memory-scanner
     $ premake5 vs2019
 
-The solution file is located at `build/memory-scanner.sln`.
+The solution file is located at `build/memory-scanner.sln`. For simplification reasons a plain Visual Sudio 2022 Solution has already been created, which can be removed with `premake5 clean`.
 
 ## Implementing new datatypes
 New datatypes can easily be added by implementing the `Datatype` interface:
