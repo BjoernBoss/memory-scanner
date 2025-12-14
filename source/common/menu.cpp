@@ -6,69 +6,36 @@
 #include <types/float-types.h>
 #include <types/extra-types.h>
 
-#include <iostream>
-#include <Psapi.h>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
 
 /* implement the global menu instance */
-MenuInstance::Entry::Entry() {
-	buffer = 0;
-	writeBuffer = 0;
-	address = 0;
-	datatype = 0;
-	overwrite = false;
-}
-MenuInstance::MenuInstance() {
-	memoryMode = MemoryMode::memStatic;
-	process = INVALID_HANDLE_VALUE;
-	overwrite = false;
-	moduleOffset = (uint64_t)-1;
-	staticSectionStart = 0;
-	staticSectionEnd = 0;
-
-	selected = 0;
-	intermediate = 0;
-	scanAddr = 0;
-	scanValue = 0;
-	scanSize = 0;
-	dumpType = 0;
-	dumpAddress = 0;
-	dumpTypeSpecific = 0;
-
-	std::memset(&mutex, 0, sizeof(CRITICAL_SECTION));
-	thread = 0;
-	threadState = 0;
-}
 void MenuInstance::init() {
 	/* setup the requested timing precision */
 	timeBeginPeriod(4);
 
-	/* create the resources */
-	threadState = 0;
+	/* create the thread and synchronization primitives */
+	threadTerminate = false;
 	InitializeCriticalSection(&mutex);
-	thread = CreateThread(0, 0, MenuInstance::globalThread, (void*)this, 0, 0);
+	thread = std::thread(&MenuInstance::globalThread, this);
 
 	/* add all of the datatypes */
-	types.push_back(new types::Int<uint8_t>());
-	types.push_back(new types::Int<uint16_t>());
-	types.push_back(new types::Int<uint32_t>());
-	types.push_back(new types::Int<uint64_t>());
-	types.push_back(new types::Int<int8_t>());
-	types.push_back(new types::Int<int16_t>());
-	types.push_back(new types::Int<int32_t>());
-	types.push_back(new types::Int<int64_t>());
-	types.push_back(new types::Float<float>());
-	types.push_back(new types::Float<double>());
-	types.push_back(new types::Bool());
-	types.push_back(new types::String(false));
-	types.push_back(new types::String(true));
-	types.push_back(new types::Float2(0));
-	types.push_back(new types::Float2(1));
-	types.push_back(new types::Float3(0));
-	types.push_back(new types::Float3(1));
-	types.push_back(new types::Float3(2));
+	typeList.push_back(std::make_unique<types::Int<uint8_t>>());
+	typeList.push_back(std::make_unique<types::Int<uint16_t>>());
+	typeList.push_back(std::make_unique<types::Int<uint32_t>>());
+	typeList.push_back(std::make_unique<types::Int<uintptr_t>>());
+	typeList.push_back(std::make_unique<types::Int<int8_t>>());
+	typeList.push_back(std::make_unique<types::Int<int16_t>>());
+	typeList.push_back(std::make_unique<types::Int<int32_t>>());
+	typeList.push_back(std::make_unique<types::Int<int64_t>>());
+	typeList.push_back(std::make_unique<types::Float<float>>());
+	typeList.push_back(std::make_unique<types::Float<double>>());
+	typeList.push_back(std::make_unique<types::Bool>());
+	typeList.push_back(std::make_unique<types::String>(false));
+	typeList.push_back(std::make_unique<types::String>(true));
+	typeList.push_back(std::make_unique<types::Float2>(0));
+	typeList.push_back(std::make_unique<types::Float2>(1));
+	typeList.push_back(std::make_unique<types::Float3>(0));
+	typeList.push_back(std::make_unique<types::Float3>(1));
+	typeList.push_back(std::make_unique<types::Float3>(2));
 
 	/* add all of the menu pages */
 	host()->add(RootPage::acquire());
@@ -86,36 +53,16 @@ void MenuInstance::init() {
 }
 void MenuInstance::teardown() {
 	/* destroy the thread and the mutex */
-	threadState = 1;
-	while (threadState == 1)
-		Sleep(1);
-	CloseHandle(thread);
+	threadTerminate = true;
+	thread.join();
 	DeleteCriticalSection(&mutex);
 
 	/* reset the timing precision */
 	timeEndPeriod(4);
 
-	/* release all of the saved entries */
-	for (size_t i = 0; i < entries.size(); i++) {
-		free(entries[i].buffer);
-		free(entries[i].writeBuffer);
-	}
-
 	/* release all other resources */
 	if (process != INVALID_HANDLE_VALUE)
 		CloseHandle(process);
-	if (scanSize > 0) {
-		free(scanValue);
-		free(scanAddr);
-	}
-
-	/* release all of the datatypes */
-	for (size_t i = 0; i < types.size(); i++)
-		delete types[i];
-
-	/* release the intermediate buffer */
-	if (intermediate)
-		free(intermediate);
 }
 const char* MenuInstance::root() {
 	return RootPage::Id;
@@ -139,24 +86,24 @@ menu::Layout MenuInstance::layout(const char* current, bool update) {
 		layout.header.append("\nMemory: static");
 	else if (memoryMode == MemoryMode::memVolatile)
 		layout.header.append("\nMemory: volatile");
-	if (moduleOffset != (uint64_t)-1) {
+	if (moduleOffset.has_value()) {
 		std::stringstream ss;
-		ss << std::hex << " [module: 0x" << (void*)moduleOffset << "]";
+		ss << std::hex << " [module: 0x" << (void*)*moduleOffset << "]";
 		layout.header.append(ss.str());
 	}
 	else
 		layout.header.append(" [module: unknown]");
-	if (selected != 0)
-		layout.header.append(" (type: ").append(selected->name()).append(")");
+	if (scan.type != nullptr)
+		layout.header.append(" (type: ").append(scan.type->name()).append(")");
 	else
 		layout.header.append(" (type: none)");
-	if (scanSize > 0) {
+	if (scan.address.empty())
+		layout.header.append(" -> scan-size: 0");
+	else {
 		std::stringstream ss;
-		ss << std::dec << scanSize;
+		ss << std::dec << scan.address.size();
 		layout.header.append(" -> scan-size: ").append(ss.str());
 	}
-	else
-		layout.header.append(" -> scan-size: 0");
 
 	/* add the default menu entries */
 	layout.add(Default::exit, "exit");
@@ -183,7 +130,7 @@ bool MenuInstance::eval(menu::EntryId selected, menu::Behavior* behavior) {
 	}
 	return false;
 }
-MenuInstance::Entry& MenuInstance::entry(uint64_t address, Datatype* type, const uint8_t* buffer, std::string name) {
+MenuInstance::Entry& MenuInstance::entry(uintptr_t address, Datatype* type, const uint8_t* buffer, std::string name) {
 	/* ask the user for the name */
 	while (name.empty()) {
 		std::cout << "enter the name: ";
@@ -195,15 +142,15 @@ MenuInstance::Entry& MenuInstance::entry(uint64_t address, Datatype* type, const
 	/* populate the entry */
 	MenuInstance::Entry save;
 	save.address = address;
-	save.buffer = (uint8_t*)malloc(type->size());
-	save.writeBuffer = (uint8_t*)malloc(type->size());
-	if (buffer) {
-		std::memcpy(save.buffer, buffer, type->size());
-		std::memcpy(save.writeBuffer, buffer, type->size());
+	save.buffer.resize(type->size());
+	save.writeBuffer.resize(type->size());
+	if (buffer != nullptr) {
+		std::memcpy(save.buffer.data(), buffer, type->size());
+		std::memcpy(save.writeBuffer.data(), buffer, type->size());
 	}
 	else {
-		std::memset(save.buffer, 0, type->size());
-		std::memset(save.writeBuffer, 0, type->size());
+		std::memset(save.buffer.data(), 0, type->size());
+		std::memset(save.writeBuffer.data(), 0, type->size());
 	}
 	save.datatype = type;
 	save.name = name;
@@ -219,7 +166,7 @@ const char* MenuInstance::queryIndex(const std::string& text, size_t& index, siz
 	index = 0;
 
 	/* receive the index */
-	uint64_t tmp = 0;
+	uintptr_t tmp = 0;
 	if (!menu::Instance::host()->getNumber(text, tmp, false))
 		return "invalid index!";
 	if ((index = (size_t)tmp) >= limit)
@@ -229,31 +176,25 @@ const char* MenuInstance::queryIndex(const std::string& text, size_t& index, siz
 const char* MenuInstance::scanInitial(Datatype::Operation operation) {
 	/* read the value to compare against */
 	if (operation != Datatype::Operation::validate) {
-		if (!selected->readInput(intermediate, true))
+		if (!scan.type->readInput(tempValue.data(), true))
 			return "invalid input!";
 	}
 
-	/* allocate the array */
-	scanSize = 0x8000;
-	scanAddr = (uint64_t*)malloc(sizeof(uint64_t) * scanSize);
-	scanValue = (uint8_t*)malloc(selected->size() * scanSize);
-
 	/* loop through all of the batches and scan them */
-	size_t index = 0;
 	MEMORY_BASIC_INFORMATION memInfo;
-	uint64_t current = 0;
-	while (VirtualQueryEx(process, (void*)current, &memInfo, sizeof(MEMORY_BASIC_INFORMATION))) {
+	uint8_t* current = nullptr;
+	while (VirtualQueryEx(process, current, &memInfo, sizeof(MEMORY_BASIC_INFORMATION))) {
 		/* advance the current address */
-		current = (uint64_t)memInfo.BaseAddress + memInfo.RegionSize;
+		current = static_cast<uint8_t*>(memInfo.BaseAddress) + memInfo.RegionSize;
 
 		/* validate the address */
 		if (memoryMode != MenuInstance::MemoryMode::memAll) {
 			if (memoryMode == MenuInstance::MemoryMode::memStatic) {
-				if ((uint64_t)memInfo.BaseAddress + (uint64_t)memInfo.RegionSize <= staticSectionStart || (uint64_t)memInfo.BaseAddress >= staticSectionEnd)
+				if ((uintptr_t)memInfo.BaseAddress + (uintptr_t)memInfo.RegionSize <= staticSectionStart || (uintptr_t)memInfo.BaseAddress >= staticSectionEnd)
 					continue;
 			}
 			else if (memoryMode == MenuInstance::MemoryMode::memVolatile) {
-				if ((uint64_t)memInfo.BaseAddress >= staticSectionStart && (uint64_t)memInfo.BaseAddress + (uint64_t)memInfo.RegionSize <= staticSectionEnd)
+				if ((uintptr_t)memInfo.BaseAddress >= staticSectionStart && (uintptr_t)memInfo.BaseAddress + (uintptr_t)memInfo.RegionSize <= staticSectionEnd)
 					continue;
 			}
 		}
@@ -261,26 +202,26 @@ const char* MenuInstance::scanInitial(Datatype::Operation operation) {
 		/* validate the batch */
 		if ((memInfo.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) && (memInfo.State & MEM_COMMIT) && (memInfo.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0) {
 			/* allocate a buffer to hold the batch */
-			uint8_t* buffer = (uint8_t*)malloc(memInfo.RegionSize);
+			std::vector<uint8_t> buffer(memInfo.RegionSize);
 
 			/* read the memory */
 			SIZE_T bytesRead = 0;
 			uint8_t try_counter = 0;
 			do {
-				if (ReadProcessMemory(process, memInfo.BaseAddress, buffer, memInfo.RegionSize, &bytesRead))
+				if (ReadProcessMemory(process, memInfo.BaseAddress, buffer.data(), memInfo.RegionSize, &bytesRead))
 					break;
 			} while (try_counter++ < 0x20);
 
 			/* compute the aligned adresses */
-			uint64_t alignedStart = (uint64_t)memInfo.BaseAddress;
-			uint64_t alignedEnd = (uint64_t)memInfo.BaseAddress + bytesRead;
-			if (uint64_t off = alignedStart % selected->align())
-				alignedStart += selected->align() - off;
-			alignedEnd -= alignedEnd % selected->align();
+			uintptr_t alignedStart = (uintptr_t)memInfo.BaseAddress;
+			uintptr_t alignedEnd = (uintptr_t)memInfo.BaseAddress + bytesRead;
+			if (uintptr_t off = alignedStart % scan.type->align())
+				alignedStart += scan.type->align() - off;
+			alignedEnd -= alignedEnd % scan.type->align();
 
 			/* loop through the memory */
-			for (uint64_t i = alignedStart; i < alignedEnd; i += selected->align()) {
-				const uint8_t* value = buffer + (i - (uint64_t)memInfo.BaseAddress);
+			for (uintptr_t i = alignedStart; i < alignedEnd; i += scan.type->align()) {
+				const uint8_t* value = buffer.data() + (i - (uintptr_t)memInfo.BaseAddress);
 
 				/* validate the address */
 				if (memoryMode != MenuInstance::MemoryMode::memAll) {
@@ -297,218 +238,157 @@ const char* MenuInstance::scanInitial(Datatype::Operation operation) {
 				/* validate the value */
 				bool valid = false;
 				if (operation == Datatype::Operation::validate)
-					valid = selected->validate(value);
+					valid = scan.type->validate(value);
 				else
-					valid = selected->test(value, intermediate, operation);
+					valid = scan.type->test(value, tempValue.data(), operation);
 				if (!valid)
 					continue;
 
-				/* check if the buffer has to be resized */
-				if (index == scanSize) {
-					scanSize <<= 1;
-					scanAddr = (uint64_t*)realloc(scanAddr, scanSize * sizeof(uint64_t));
-					scanValue = (uint8_t*)realloc(scanValue, scanSize * selected->size());
-				}
-
-				/* copy the value */
-				scanAddr[index] = i;
-				memcpy(scanValue + index * selected->size(), value, selected->size());
-				index++;
+				/* add the values to the scan */
+				scan.address.push_back(i);
+				scan.value.insert(scan.value.end(), value, value + scan.type->size());
 			}
-
-			/* free the buffer */
-			free(buffer);
 		}
 
 		/* output the address */
 		std::cout << memInfo.BaseAddress << std::endl;
 	}
-
-	/* resize the arrays */
-	if (scanSize > index) {
-		scanSize = index;
-		if (scanSize == 0) {
-			free(scanAddr);
-			free(scanValue);
-		}
-		else {
-			scanAddr = (uint64_t*)realloc(scanAddr, scanSize * sizeof(uint64_t));
-			scanValue = (uint8_t*)realloc(scanValue, scanSize * selected->size());
-		}
-	}
 	return "scan successful!";
 }
 void MenuInstance::scanByBatch(const uint8_t* comp, Datatype::Operation operation) {
 	/* loop through all of the batches and scan them */
-	size_t index = 0;
-	size_t offset = 0;
 	MEMORY_BASIC_INFORMATION memInfo;
-	uint64_t current = 0;
-	size_t percent = 0;
-	while (VirtualQueryEx(process, (void*)current, &memInfo, sizeof(MEMORY_BASIC_INFORMATION))) {
+	size_t index = 0, validCount = 0, percent = 0;
+	uint8_t* current = nullptr;
+	while (VirtualQueryEx(process, current, &memInfo, sizeof(MEMORY_BASIC_INFORMATION))) {
 		/* remove all of the rest of the addresses before this batch */
-		while (index < scanSize) {
-			if (scanAddr[index] >= (uint64_t)memInfo.BaseAddress)
-				break;
-			offset++;
+		while (index < scan.address.size() && scan.address[index] < (uintptr_t)memInfo.BaseAddress)
 			index++;
-		}
+
+		/* advance the current address */
+		current = static_cast<uint8_t*>(memInfo.BaseAddress) + memInfo.RegionSize;
+
+		/* check if the entire batch can be skipped */
+		if (index >= scan.address.size() || (uintptr_t)memInfo.BaseAddress + memInfo.RegionSize <= scan.address[index])
+			continue;
 
 		/* validate the current batch */
 		if ((memInfo.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) && (memInfo.State & MEM_COMMIT) && (memInfo.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0) {
 			/* allocate a buffer to read the entire batch */
-			uint8_t* buffer = (uint8_t*)malloc(memInfo.RegionSize);
+			std::vector<uint8_t> buffer(memInfo.RegionSize);
 
 			/* read the memory */
 			SIZE_T read_count = 0;
 			uint8_t try_counter = 0;
 			do {
-				if (!ReadProcessMemory(process, memInfo.BaseAddress, buffer, memInfo.RegionSize, &read_count))
+				if (!ReadProcessMemory(process, memInfo.BaseAddress, buffer.data(), memInfo.RegionSize, &read_count))
 					read_count = 0;
 			} while (read_count == 0 && try_counter++ < 0x20);
 
 			/* loop through the buffer as long as possible */
-			while (index < scanSize) {
+			while (index < scan.address.size()) {
 				/* check if the selected type fits into the rest of the current batch */
-				if (scanAddr[index] + selected->size() > (uint64_t)memInfo.BaseAddress + read_count)
+				if (scan.address[index] + scan.type->size() > (uintptr_t)memInfo.BaseAddress + read_count)
 					break;
-				const uint8_t* value = buffer + (scanAddr[index] - (uint64_t)memInfo.BaseAddress);
+				const uint8_t* value = buffer.data() + (scan.address[index] - (uintptr_t)memInfo.BaseAddress);
 
 				/* check if the value satisfies the condition */
 				bool valid = false;
 				if (operation == Datatype::Operation::validate)
-					valid = selected->validate(value);
+					valid = scan.type->validate(value);
 				else
-					valid = selected->test(value, comp == 0 ? scanValue + index * selected->size() : comp, operation);
+					valid = scan.type->test(value, comp == nullptr ? (scan.value.data() + index * scan.type->size()) : comp, operation);
 
 				/* check if the value is considered valid and advance the current index */
 				if (valid) {
-					scanAddr[index - offset] = scanAddr[index];
-					std::memcpy(scanValue + (index - offset) * selected->size(), value, selected->size());
+					scan.address[validCount] = scan.address[index];
+					std::memcpy(scan.value.data() + validCount * scan.type->size(), value, scan.type->size());
+					++validCount;
 				}
-				else
-					offset++;
 				index++;
 
 				/* print the percentage */
-				float progress = ((float)index * 100.0f) / (float)scanSize;
-				if (static_cast<uint64_t>(progress + 0.5f) != percent) {
-					percent = static_cast<uint64_t>(progress + 0.5f);
+				float progress = ((float)index * 100.0f) / (float)scan.address.size();
+				if (static_cast<uintptr_t>(progress + 0.5f) != percent) {
+					percent = static_cast<uintptr_t>(progress + 0.5f);
 					std::cout << std::dec << percent << '%' << std::endl;
 				}
 			}
-
-			/* release the buffer */
-			free(buffer);
 		}
-
-		/* advance the address */
-		current = (uint64_t)memInfo.BaseAddress + memInfo.RegionSize;
 	}
 
 	/* remove all invalid values */
-	offset += (scanSize - index);
-	if (offset > 0) {
-		if ((scanSize -= offset) == 0) {
-			free(scanAddr);
-			free(scanValue);
-		}
-		else {
-			scanAddr = (uint64_t*)realloc(scanAddr, scanSize * sizeof(uint64_t));
-			scanValue = (uint8_t*)realloc(scanValue, scanSize * selected->size());
-		}
-	}
+	scan.address.resize(validCount);
+	scan.value.resize(validCount * scan.type->size());
 }
 void MenuInstance::scanByAddress(const uint8_t* comp, Datatype::Operation operation) {
-	/* allocate the temporary buffer */
-	uint8_t* buffer = (uint8_t*)malloc(selected->size());
+	std::vector<uint8_t> buffer(scan.type->size());
 
 	/* loop through all of the addresses and read them */
-	size_t offset = 0;
-	size_t percent = 0;
-	for (size_t i = 0; i < scanSize; i++) {
+	size_t validCount = 0, percent = 0;
+	for (size_t i = 0; i < scan.address.size(); i++) {
 		SIZE_T read = 0;
 
 		/* try to read the value */
-		if (!ReadProcessMemory(process, (void*)scanAddr[i], buffer, selected->size(), &read) || read != selected->size()) {
-			offset++;
+		if (!ReadProcessMemory(process, (void*)scan.address[i], buffer.data(), scan.type->size(), &read) || read != scan.type->size())
 			continue;
-		}
 
 		/* verify the value */
 		bool valid = false;
 		if (operation == Datatype::Operation::validate)
-			valid = selected->validate(buffer);
+			valid = scan.type->validate(buffer.data());
 		else
-			valid = selected->test(buffer, comp == 0 ? scanValue + i * selected->size() : comp, operation);
+			valid = scan.type->test(buffer.data(), comp == nullptr ? (scan.value.data() + i * scan.type->size()) : comp, operation);
 
 		/* check if the value should be stored */
 		if (valid) {
-			scanAddr[i - offset] = scanAddr[i];
-			std::memcpy(scanValue + (i - offset) * selected->size(), buffer, selected->size());
+			scan.address[validCount] = scan.address[i];
+			std::memcpy(scan.value.data() + validCount * scan.type->size(), buffer.data(), scan.type->size());
+			++validCount;
 		}
-		else
-			offset++;
 	}
-
-	/* free the buffer */
-	free(buffer);
 
 	/* remove all invalid values */
-	if (offset > 0) {
-		if ((scanSize -= offset) == 0) {
-			free(scanAddr);
-			free(scanValue);
-		}
-		else {
-			scanAddr = (uint64_t*)realloc(scanAddr, scanSize * sizeof(uint64_t));
-			scanValue = (uint8_t*)realloc(scanValue, scanSize * selected->size());
-		}
-	}
+	scan.address.resize(validCount);
+	scan.value.resize(validCount * scan.type->size());
 }
 const char* MenuInstance::scanData(Datatype::Operation operation, bool self) {
 	/* check if the user should enter the value */
 	if (operation != Datatype::Operation::validate && !self) {
-		if (!selected->readInput(intermediate, true))
+		if (!scan.type->readInput(tempValue.data(), true))
 			return "invalid input!";
 	}
 
 	/* call the appropriate scan function */
-	if (scanSize < 0x8000)
-		scanByAddress((self ? 0 : intermediate), operation);
+	if (scan.address.size() < 0x8000)
+		scanByAddress((self ? nullptr : tempValue.data()), operation);
 	else
-		scanByBatch((self ? 0 : intermediate), operation);
+		scanByBatch((self ? nullptr : tempValue.data()), operation);
 	return "scan successful!";
 }
-std::ostream& MenuInstance::printIndex(std::ostream& stream, uint64_t index) {
+std::ostream& MenuInstance::printIndex(std::ostream& stream, uintptr_t index) {
 	return (stream << std::setfill('0') << std::setw(7) << std::dec << index);
 }
-DWORD __stdcall MenuInstance::globalThread(void* ptr) {
-	MenuInstance* instance = reinterpret_cast<MenuInstance*>(ptr);
-
+void MenuInstance::globalThread() {
 	/* enter the main overwrite loop */
-	while (instance->threadState == 0) {
+	while (!threadTerminate) {
 		/* lock the resources */
-		EnterCriticalSection(&instance->mutex);
+		EnterCriticalSection(&mutex);
 
 		/* check if overwriting is enabled */
-		if (instance->overwrite && instance->process != INVALID_HANDLE_VALUE) {
+		if (overwrite && process != INVALID_HANDLE_VALUE) {
 			/* iterate through the variablesand overwrite them */
-			for (const Entry& entry : instance->entries) {
+			for (const Entry& entry : entries) {
 				if (!entry.overwrite)
 					continue;
-				WriteProcessMemory(instance->process, (void*)entry.address, entry.writeBuffer, entry.datatype->size(), 0);
+				WriteProcessMemory(process, (void*)entry.address, entry.writeBuffer.data(), entry.datatype->size(), nullptr);
 			}
 		}
 
 		/* release the resources and yield cpu time */
-		LeaveCriticalSection(&instance->mutex);
+		LeaveCriticalSection(&mutex);
 		Sleep(1);
 	}
-
-	/* mark the thread as being terminated */
-	instance->threadState = 2;
-	return 0;
 }
 
 
@@ -521,7 +401,7 @@ menu::Layout RootPage::construct() {
 	MenuInstance* instance = (MenuInstance*)menu::Page::instance();
 
 	/* update the menu-mode */
-	if (instance->process != INVALID_HANDLE_VALUE && instance->moduleOffset == (uint64_t)-1)
+	if (instance->process != INVALID_HANDLE_VALUE && !instance->moduleOffset.has_value())
 		instance->memoryMode = MenuInstance::MemoryMode::memAll;
 
 	/* setup the page-menu */
@@ -541,7 +421,7 @@ menu::Layout RootPage::construct() {
 		}
 	}
 	if (!menu::Page::host()->isLoaded(DatatypePage::Id)) {
-		if (instance->selected == 0)
+		if (instance->scan.type == nullptr)
 			layout.add(MenuInstance::Default::custom + 3, "datatype: select");
 		else
 			layout.add(MenuInstance::Default::custom + 3, "datatype: change");
@@ -554,7 +434,7 @@ menu::Layout RootPage::construct() {
 		layout.add(MenuInstance::Default::custom + 7, "overwriting: disable");
 	else
 		layout.add(MenuInstance::Default::custom + 7, "overwriting: enable");
-	if (instance->moduleOffset != (uint64_t)-1) {
+	if (instance->moduleOffset.has_value()) {
 		if (instance->memoryMode == MenuInstance::MemoryMode::memAll)
 			layout.add(MenuInstance::Default::custom + 6, "memory-mode: static");
 		else if (instance->memoryMode == MenuInstance::MemoryMode::memStatic)
@@ -562,12 +442,12 @@ menu::Layout RootPage::construct() {
 		else
 			layout.add(MenuInstance::Default::custom + 6, "memory-mode: all");
 	}
-	if (instance->process != INVALID_HANDLE_VALUE && instance->selected != 0) {
-		if (instance->scanSize == 0) {
+	if (instance->process != INVALID_HANDLE_VALUE && instance->scan.type != nullptr) {
+		if (instance->scan.address.empty()) {
 			layout.add(MenuInstance::Default::custom + 10, "new scan: unknown");
 			layout.add(MenuInstance::Default::custom + 11, "new scan: equal");
 			layout.add(MenuInstance::Default::custom + 12, "new scan: unequal");
-			if (!instance->selected->restricted()) {
+			if (!instance->scan.type->restricted()) {
 				layout.add(MenuInstance::Default::custom + 13, "new scan: less");
 				layout.add(MenuInstance::Default::custom + 14, "new scan: less equal");
 				layout.add(MenuInstance::Default::custom + 15, "new scan: greater equal");
@@ -603,7 +483,7 @@ menu::Behavior RootPage::evaluate(menu::EntryId selected) {
 		LeaveCriticalSection(&instance->mutex);
 		return behavior;
 	case MenuInstance::Default::custom + 3:
-		if (instance->scanSize > 0)
+		if (!instance->scan.address.empty())
 			return menu::Behavior("", menu::Traverse::push, DatatypeVerifyPage::Id);
 		return menu::Behavior("", menu::Traverse::push, DatatypePage::Id);
 	case MenuInstance::Default::custom + 4:
@@ -629,49 +509,49 @@ menu::Behavior RootPage::evaluate(menu::EntryId selected) {
 		return menu::Behavior("", menu::Traverse::push, PrintPage::Id);
 	case MenuInstance::Default::custom + 10:  /* unknown-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::validate);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
 		return behavior;
 	case MenuInstance::Default::custom + 11:  /* equal-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::equal);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
 		return behavior;
 	case MenuInstance::Default::custom + 12:  /* unequal-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::unequal);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
 		return behavior;
 	case MenuInstance::Default::custom + 13:  /* less-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::less);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
 		return behavior;
 	case MenuInstance::Default::custom + 14:  /* less-equal-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::lessEqual);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
 		return behavior;
 	case MenuInstance::Default::custom + 15:  /* greater-equal-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::greaterEqual);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
 		return behavior;
 	case MenuInstance::Default::custom + 16:  /* greater-scan */
 		behavior.response = instance->scanInitial(Datatype::Operation::greater);
-		if (instance->scanSize > 0) {
+		if (!instance->scan.address.empty()) {
 			behavior.traverse = menu::Traverse::push;
 			behavior.target = ScanPage::Id;
 		}
@@ -739,9 +619,9 @@ menu::Layout ProcessPage::construct() {
 	layout.add(MenuInstance::Default::custom, "refresh");
 
 	/* add all of the windows */
-	char buffer[80];
+	char buffer[80] = { 0 };
 	for (size_t i = 0; i < pWindows.size(); i++) {
-		if (GetWindowTextA(pWindows[i], buffer, 80) == 0)
+		if (GetWindowTextA(pWindows[i], buffer, sizeof(buffer)) == 0)
 			pWindows.erase(pWindows.begin() + (i--));
 		else
 			layout.add(MenuInstance::Default::custom + 1 + i, std::string("process: ").append(buffer));
@@ -795,11 +675,11 @@ menu::Behavior ProcessPage::evaluate(menu::EntryId selected) {
 	instance->processName = std::string(buffer);
 
 	/* clear the variables */
-	uint64_t batch_count = 0;
-	uint64_t total_memory = 0;
+	uintptr_t batch_count = 0;
+	uintptr_t total_memory = 0;
 
 	/* loop through the memory of the process and extract the memory */
-	uint64_t nextaddress = 0;
+	uintptr_t nextaddress = 0;
 	MEMORY_BASIC_INFORMATION memInfo = { 0 };
 	while (VirtualQueryEx(instance->process, (void*)nextaddress, (PMEMORY_BASIC_INFORMATION)&memInfo, sizeof(MEMORY_BASIC_INFORMATION)) != 0) {
 		/* check if the memory is writeable as readonly is not of any interest */
@@ -809,7 +689,7 @@ menu::Behavior ProcessPage::evaluate(menu::EntryId selected) {
 		}
 
 		/* adjust the nextaddress */
-		nextaddress = (uint64_t)memInfo.BaseAddress + memInfo.RegionSize;
+		nextaddress = (uintptr_t)memInfo.BaseAddress + memInfo.RegionSize;
 	}
 
 	/* add the data to the message */
@@ -818,7 +698,7 @@ menu::Behavior ProcessPage::evaluate(menu::EntryId selected) {
 	sstr << std::dec << "total-batches: " << batch_count << std::endl;
 	sstr << std::dec << "total-memory : " << total_memory << std::endl;
 	behavior.traverse = menu::Traverse::root;
-	instance->moduleOffset = (uint64_t)-1;
+	instance->moduleOffset = std::nullopt;
 
 	/* get the module-offset */
 	HMODULE modOffset;
@@ -830,15 +710,11 @@ menu::Behavior ProcessPage::evaluate(menu::EntryId selected) {
 	}
 	sstr << "module-offset: 0x" << (void*)modOffset << std::endl;
 	sstr << "static-memory: ";
-	instance->staticSectionStart = (uint64_t)modOffset;
-	instance->moduleOffset = (uint64_t)modOffset;
 
 	/* find the file and open it (to extract the static addresses) */
-	char nameBuffer[1024];
-	memset(nameBuffer, 0, 1024);
-	if (GetModuleFileNameExA(instance->process, 0, nameBuffer, 1024) == 0) {
+	char nameBuffer[1024] = { 0 };
+	if (GetModuleFileNameExA(instance->process, 0, nameBuffer, sizeof(nameBuffer)) == 0) {
 		sstr << "none (failed to obtain module-path)";
-		instance->moduleOffset = (uint64_t)-1;
 		behavior.response = sstr.str();
 		return behavior;
 	}
@@ -847,71 +723,55 @@ menu::Behavior ProcessPage::evaluate(menu::EntryId selected) {
 	HANDLE fileHandle = CreateFileA(nameBuffer, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
 	if (fileHandle == INVALID_HANDLE_VALUE) {
 		sstr << "none (failed to open module-file)";
-		instance->moduleOffset = (uint64_t)-1;
 		behavior.response = sstr.str();
 		return behavior;
 	}
+	std::unique_ptr<void, void(*)(HANDLE)> _cleanup{ fileHandle, [](HANDLE h) { CloseHandle(h); } };
 
 	/* extract the offset to the dos-header */
 	IMAGE_DOS_HEADER dosHeader = { 0 };
-	if (ReadFile(fileHandle, &dosHeader, sizeof(IMAGE_DOS_HEADER), 0, 0) == 0) {
-		CloseHandle(fileHandle);
+	if (ReadFile(fileHandle, &dosHeader, sizeof(IMAGE_DOS_HEADER), nullptr, nullptr) == 0) {
 		sstr << "none (failed to read DOS-Header)";
-		instance->moduleOffset = (uint64_t)-1;
 		behavior.response = sstr.str();
 		return behavior;
 	}
 
 	/* extract the nt-header */
 	IMAGE_NT_HEADERS32 imageHeader = { 0 };
-	if (SetFilePointer(fileHandle, dosHeader.e_lfanew, 0, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
-		CloseHandle(fileHandle);
+	if (SetFilePointer(fileHandle, dosHeader.e_lfanew, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
 		sstr << "none (failed to read PE-Header)";
-		instance->moduleOffset = (uint64_t)-1;
 		behavior.response = sstr.str();
 		return behavior;
 	}
-	if (ReadFile(fileHandle, &imageHeader, sizeof(IMAGE_NT_HEADERS32), 0, 0) == 0) {
-		CloseHandle(fileHandle);
+	if (ReadFile(fileHandle, &imageHeader, sizeof(IMAGE_NT_HEADERS32), nullptr, nullptr) == 0) {
 		sstr << "none (failed to read PE-Header)";
-		instance->moduleOffset = (uint64_t)-1;
 		behavior.response = sstr.str();
 		return behavior;
 	}
 
 	/* check if its a 32 or 64-bit file */
-	if (imageHeader.OptionalHeader.Magic == 0x10b) {
+	IMAGE_SECTION_HEADER sectionHeader = { 0 };
+	if (imageHeader.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
 		/* extract the section-headers (and look for the .data-header) */
-		IMAGE_SECTION_HEADER sectionHeader = { 0 };
 		if (imageHeader.FileHeader.NumberOfSections == 0) {
-			CloseHandle(fileHandle);
 			sstr << "none (.data section not found [x86])";
-			instance->moduleOffset = (uint64_t)-1;
 			behavior.response = sstr.str();
 			return behavior;
 		}
-		for (uint64_t i = 0; i < imageHeader.FileHeader.NumberOfSections; i++) {
+
+		for (uintptr_t i = 0; i < imageHeader.FileHeader.NumberOfSections; i++) {
 			/* read the header */
-			if (ReadFile(fileHandle, &sectionHeader, sizeof(IMAGE_SECTION_HEADER), 0, 0) == 0) {
-				CloseHandle(fileHandle);
+			if (ReadFile(fileHandle, &sectionHeader, sizeof(IMAGE_SECTION_HEADER), nullptr, nullptr) == 0) {
 				sstr << "none (failed to read SECTION-Header [x86])";
-				instance->moduleOffset = (uint64_t)-1;
 				behavior.response = sstr.str();
 				return behavior;
 			}
 
 			/* check if its the .data-header */
-			if (memcmp(sectionHeader.Name, ".data", 6) == 0) {
-				CloseHandle(fileHandle);
-				instance->staticSectionStart += sectionHeader.VirtualAddress;
-				instance->staticSectionEnd = sectionHeader.Misc.VirtualSize + instance->staticSectionStart;
+			if (memcmp(sectionHeader.Name, ".data", 6) == 0)
 				break;
-			}
 			else if (i + 1 == imageHeader.FileHeader.NumberOfSections) {
-				/* setup the final string */
-				CloseHandle(fileHandle);
 				sstr << "none (.data section not found [x86])";
-				instance->moduleOffset = (uint64_t)-1;
 				behavior.response = sstr.str();
 				return behavior;
 			}
@@ -920,57 +780,46 @@ menu::Behavior ProcessPage::evaluate(menu::EntryId selected) {
 	else {
 		/* extract the 64nt-header */
 		IMAGE_NT_HEADERS64 imageHeader64 = { 0 };
-		if (SetFilePointer(fileHandle, dosHeader.e_lfanew, 0, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
-			CloseHandle(fileHandle);
+		if (SetFilePointer(fileHandle, dosHeader.e_lfanew, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
 			sstr << "none (failed to read PE-Header [x86_64])";
-			instance->moduleOffset = (uint64_t)-1;
 			behavior.response = sstr.str();
 			return behavior;
 		}
-		if (ReadFile(fileHandle, &imageHeader64, sizeof(IMAGE_NT_HEADERS64), 0, 0) == 0) {
-			CloseHandle(fileHandle);
+		if (ReadFile(fileHandle, &imageHeader64, sizeof(IMAGE_NT_HEADERS64), nullptr, nullptr) == 0) {
 			sstr << "none (failed to read PE-Header [x86_64])";
-			instance->moduleOffset = (uint64_t)-1;
 			behavior.response = sstr.str();
 			return behavior;
 		}
 
 		/* extract the section-headers (and look for the .data-header) */
-		IMAGE_SECTION_HEADER sectionHeader = { 0 };
 		if (imageHeader64.FileHeader.NumberOfSections == 0) {
-			CloseHandle(fileHandle);
 			sstr << "none (.data section not found [x86_64])";
-			instance->moduleOffset = (uint64_t)-1;
 			behavior.response = sstr.str();
 			return behavior;
 		}
-		for (uint64_t i = 0; i < imageHeader64.FileHeader.NumberOfSections; i++) {
+		for (uintptr_t i = 0; i < imageHeader64.FileHeader.NumberOfSections; i++) {
 			/* read the header */
-			if (ReadFile(fileHandle, &sectionHeader, sizeof(IMAGE_SECTION_HEADER), 0, 0) == 0) {
-				CloseHandle(fileHandle);
+			if (ReadFile(fileHandle, &sectionHeader, sizeof(IMAGE_SECTION_HEADER), nullptr, nullptr) == 0) {
 				sstr << "none (failed to read SECTION-Header [x86_64])";
-				instance->moduleOffset = (uint64_t)-1;
 				behavior.response = sstr.str();
 				return behavior;
 			}
 
 			/* check if its the .data-header */
-			if (memcmp(sectionHeader.Name, ".data", 6) == 0) {
-				CloseHandle(fileHandle);
-				instance->staticSectionStart += sectionHeader.VirtualAddress;
-				instance->staticSectionEnd = sectionHeader.Misc.VirtualSize + instance->staticSectionStart;
+			if (memcmp(sectionHeader.Name, ".data", 6) == 0)
 				break;
-			}
 			else if (i + 1 == imageHeader64.FileHeader.NumberOfSections) {
-				/* setup the final string */
-				CloseHandle(fileHandle);
 				sstr << "none (.data section not found [x86_64])";
-				instance->moduleOffset = (uint64_t)-1;
 				behavior.response = sstr.str();
 				return behavior;
 			}
 		}
 	}
+
+	/* update the module information */
+	instance->moduleOffset = (uintptr_t)modOffset;
+	instance->staticSectionStart = (uintptr_t)modOffset + sectionHeader.VirtualAddress;
+	instance->staticSectionEnd = sectionHeader.Misc.VirtualSize + instance->staticSectionStart;
 
 	/* add the output-result */
 	sstr << std::hex << "0x" << (void*)instance->staticSectionStart << " - 0x" << (void*)instance->staticSectionEnd;
@@ -1004,8 +853,8 @@ menu::Layout DatatypePage::construct() {
 	menu::Layout layout = instance->layout(Id, false);
 
 	/* add all of the datatypes */
-	for (size_t i = 0; i < instance->types.size(); i++)
-		layout.add(MenuInstance::Default::custom + i, "datatype: " + std::string(instance->types[i]->name()));
+	for (size_t i = 0; i < instance->typeList.size(); i++)
+		layout.add(MenuInstance::Default::custom + i, "datatype: " + std::string(instance->typeList[i]->name()));
 	return layout;
 }
 menu::Behavior DatatypePage::evaluate(menu::EntryId selected) {
@@ -1019,27 +868,22 @@ menu::Behavior DatatypePage::evaluate(menu::EntryId selected) {
 
 	/* check if the type has changed */
 	selected -= MenuInstance::Default::custom;
-	if (instance->selected == instance->types[selected]) {
+	if (instance->scan.type == instance->typeList[selected].get()) {
 		behavior.response = "datatype unchanged!";
 		return behavior;
 	}
 
 	/* clear the current scan */
-	if (instance->scanSize > 0) {
-		free(instance->scanAddr);
-		free(instance->scanValue);
-		instance->scanSize = 0;
-	}
+	instance->scan.address.clear();
+	instance->scan.value.clear();
 
 	/* set the datatype */
-	instance->selected = instance->types[selected];
+	instance->scan.type = instance->typeList[selected].get();
 	behavior.response = "datatype changed!";
 	behavior.traverse = menu::Traverse::root;
 
 	/* update the intermediate buffer */
-	if (instance->intermediate != 0)
-		free(instance->intermediate);
-	instance->intermediate = (uint8_t*)malloc(instance->selected->size());
+	instance->tempValue.resize(instance->scan.type->size());
 	return behavior;
 }
 void DatatypePage::teardown() {
@@ -1096,9 +940,8 @@ menu::Behavior RestartVerifyPage::evaluate(menu::EntryId selected) {
 	MenuInstance* instance = (MenuInstance*)menu::Page::instance();
 
 	/* clear the scan */
-	free(instance->scanAddr);
-	free(instance->scanValue);
-	instance->scanSize = 0;
+	instance->scan.address.clear();
+	instance->scan.value.clear();
 	return menu::Behavior("", menu::Traverse::root);
 }
 void RestartVerifyPage::teardown() {
@@ -1118,7 +961,9 @@ menu::Layout ScanPage::construct() {
 	menu::Layout layout = instance->layout(Id, false);
 
 	/* add the menu-entries */
-	if (instance->scanSize > 0) {
+	if (instance->scan.address.empty())
+		layout.header.append("\n\nThe current scan is empty!");
+	else {
 		if (!menu::Page::host()->isLoaded(ConstantPage::Id))
 			layout.add(MenuInstance::Default::custom + 1, "filter out fluctuations");
 		if (!menu::Page::host()->isLoaded(PrintPage::Id))
@@ -1127,21 +972,19 @@ menu::Layout ScanPage::construct() {
 		layout.add(MenuInstance::Default::custom + 4, "scan: refresh");
 		layout.add(MenuInstance::Default::custom + 5, "scan: unchanged");
 		layout.add(MenuInstance::Default::custom + 6, "scan: changed");
-		if (!instance->selected->restricted()) {
+		if (!instance->scan.type->restricted()) {
 			layout.add(MenuInstance::Default::custom + 7, "scan: decreased");
 			layout.add(MenuInstance::Default::custom + 8, "scan: increased");
 		}
 		layout.add(MenuInstance::Default::custom + 9, "scan: equal to");
 		layout.add(MenuInstance::Default::custom + 10, "scan: unequal to");
-		if (!instance->selected->restricted()) {
+		if (!instance->scan.type->restricted()) {
 			layout.add(MenuInstance::Default::custom + 11, "scan: less than");
 			layout.add(MenuInstance::Default::custom + 12, "scan: less-equal than");
 			layout.add(MenuInstance::Default::custom + 13, "scan: greater-equal than");
 			layout.add(MenuInstance::Default::custom + 14, "scan: greater than");
 		}
 	}
-	else
-		layout.header.append("\n\nThe current scan is empty!");
 	return layout;
 }
 menu::Behavior ScanPage::evaluate(menu::EntryId selected) {
@@ -1217,13 +1060,13 @@ bool ConstantPage::update() {
 	MenuInstance* instance = (MenuInstance*)menu::Page::instance();
 
 	/* refresh the data */
-	size_t size = instance->scanSize;
+	size_t size = instance->scan.address.size();
 	instance->scanData(Datatype::Operation::equal, true);
 
 	/* check if the screen should be refreshed */
-	if (size != instance->scanSize)
+	if (size != instance->scan.address.size())
 		pRefresh = true;
-	return !pRefresh || GetTickCount64() - pStamp < 125;
+	return (!pRefresh || GetTickCount64() - pStamp < 125);
 }
 menu::Layout ConstantPage::construct() {
 	MenuInstance* instance = (MenuInstance*)menu::Page::instance();
@@ -1236,7 +1079,7 @@ menu::Layout ConstantPage::construct() {
 	menu::Layout layout = instance->layout(Id, false);
 
 	/* return the input-type */
-	if (instance->scanSize == 0)
+	if (instance->scan.address.empty())
 		layout.header.append("\n\nThe current scan is empty!");
 	else
 		layout.updateLoop = true;
@@ -1266,20 +1109,19 @@ bool PrintPage::update() {
 		return false;
 
 	/* cache the current data */
-	uint8_t* buffer = (uint8_t*)malloc(instance->scanSize * instance->selected->size());
-	std::memcpy(buffer, instance->scanValue, instance->scanSize * instance->selected->size());
+	std::vector<uint8_t> buffer(instance->scan.value);
 
 	/* refresh the data */
-	size_t size = instance->scanSize;
+	size_t size = instance->scan.address.size();
 	instance->scanData(Datatype::Operation::validate, false);
-	if (size != instance->scanSize)
+	if (size != instance->scan.address.size())
 		pRefresh = true;
 
 	/* check if any of the data have changed */
 	else {
-		for (size_t i = 0; i < instance->scanSize; i++) {
-			uint64_t offset = i * instance->selected->size();
-			if (instance->selected->test(buffer + offset, instance->scanValue + offset, Datatype::Operation::equal))
+		for (size_t i = 0; i < instance->scan.address.size(); i++) {
+			uintptr_t offset = i * instance->scan.type->size();
+			if (instance->scan.type->test(buffer.data() + offset, instance->scan.value.data() + offset, Datatype::Operation::equal))
 				continue;
 			pRefresh = true;
 			break;
@@ -1287,32 +1129,31 @@ bool PrintPage::update() {
 	}
 
 	/* release the resources and check if the screen should be refreshed */
-	free(buffer);
-	return !pRefresh || GetTickCount64() - pStamp < 125;
+	return (!pRefresh || GetTickCount64() - pStamp < 125);
 }
 menu::Layout PrintPage::construct() {
 	MenuInstance* instance = (MenuInstance*)menu::Page::instance();
 
 	/* create the page-object */
 	menu::Layout layout = instance->layout(Id, true);
-	uint64_t size = instance->scanSize;
-	if (instance->scanSize > 0) {
+	uintptr_t size = instance->scan.address.size();
+	if (!instance->scan.address.empty()) {
 		/* refresh the data */
 		instance->scanData(Datatype::Operation::validate, false);
 
 		/* write the current scan to the output */
 		std::stringstream sstr;
-		for (size_t i = 0; i < instance->scanSize; i++) {
+		for (size_t i = 0; i < instance->scan.address.size(); i++) {
 			/* check if the address is static */
-			if (instance->moduleOffset != (uint64_t)-1) {
-				if (instance->scanAddr[i] >= instance->staticSectionStart && instance->scanAddr[i] < instance->staticSectionEnd)
-					instance->printIndex(sstr, i) << " - " << "[module+0x" << std::hex << (void*)(instance->scanAddr[i] - instance->moduleOffset) << "] -> ";
+			if (instance->moduleOffset.has_value()) {
+				if (instance->scan.address[i] >= instance->staticSectionStart && instance->scan.address[i] < instance->staticSectionEnd)
+					instance->printIndex(sstr, i) << " - " << "[module+0x" << std::hex << (void*)(instance->scan.address[i] - *instance->moduleOffset) << "] -> ";
 				else
-					instance->printIndex(sstr, i) << " - " << " [base+0x" << std::hex << (void*)instance->scanAddr[i] << "]  -> ";
+					instance->printIndex(sstr, i) << " - " << " [base+0x" << std::hex << (void*)instance->scan.address[i] << "]  -> ";
 			}
 			else
-				instance->printIndex(sstr, i) << " - [0x" << std::hex << (void*)instance->scanAddr[i] << "] -> ";
-			sstr << instance->selected->toString(instance->scanValue + i * instance->selected->size()) << std::endl;
+				instance->printIndex(sstr, i) << " - [0x" << std::hex << (void*)instance->scan.address[i] << "] -> ";
+			sstr << instance->scan.type->toString(instance->scan.value.data() + i * instance->scan.type->size()) << std::endl;
 		}
 		layout.header.append("\n\n").append(sstr.str());
 
@@ -1332,7 +1173,7 @@ menu::Layout PrintPage::construct() {
 	}
 
 	/* reset the refresh-data */
-	pRefresh = size != instance->scanSize;
+	pRefresh = (size != instance->scan.address.size());
 	pStamp = GetTickCount64();
 
 	/* return the page-structure */
@@ -1351,40 +1192,33 @@ menu::Behavior PrintPage::evaluate(menu::EntryId selected) {
 		size_t index = 0;
 
 		/* receive the index */
-		if (const char* result = instance->queryIndex("enter the index", index, instance->scanSize)) {
+		if (const char* result = instance->queryIndex("enter the index", index, instance->scan.address.size())) {
 			behavior.response = result;
 			return behavior;
 		}
 
 		/* remove the entry */
-		for (size_t i = index + 1; i < instance->scanSize; i++) {
-			instance->scanAddr[i - 1] = instance->scanAddr[i];
-			memcpy((void*)((uint64_t)instance->scanValue + (i - 1) * instance->selected->size()), (void*)((uint64_t)instance->scanValue + i * instance->selected->size()), instance->selected->size());
+		for (size_t i = index + 1; i < instance->scan.address.size(); i++) {
+			instance->scan.address[i - 1] = instance->scan.address[i];
+			memcpy((void*)((uintptr_t)instance->scan.value.data() + (i - 1) * instance->scan.type->size()), (void*)((uintptr_t)instance->scan.value.data() + i * instance->scan.type->size()), instance->scan.type->size());
 		}
 
 		/* resize the array */
-		instance->scanSize--;
-		if (instance->scanSize == 0) {
-			free(instance->scanAddr);
-			free(instance->scanValue);
-		}
-		else {
-			instance->scanAddr = (uint64_t*)realloc(instance->scanAddr, instance->scanSize * sizeof(uint64_t));
-			instance->scanValue = (uint8_t*)realloc(instance->scanValue, instance->scanSize * instance->selected->size());
-		}
+		instance->scan.address.pop_back();
+		instance->scan.value.resize(instance->scan.value.size() - instance->scan.type->size());
 		behavior.response = "entry successfully removed!";
 	}
 	else if (selected == MenuInstance::Default::custom + 2) {
 		size_t index = 0;
 
 		/* receive the index */
-		if (const char* result = instance->queryIndex("enter the index", index, instance->scanSize)) {
+		if (const char* result = instance->queryIndex("enter the index", index, instance->scan.address.size())) {
 			behavior.response = result;
 			return behavior;
 		}
 
 		/* create the new entry */
-		instance->entry(instance->scanAddr[index], instance->selected, instance->scanValue + index * instance->selected->size());
+		instance->entry(instance->scan.address[index], instance->scan.type, instance->scan.value.data() + index * instance->scan.type->size());
 		behavior.response = "entry successfully added to list!";
 	}
 	else if (selected == MenuInstance::Default::custom + 3) {
@@ -1399,39 +1233,39 @@ menu::Behavior PrintPage::evaluate(menu::EntryId selected) {
 		}
 
 		/* loop through the entries and add them */
-		for (size_t i = 0; i < instance->scanSize; i++)
-			instance->entry(instance->scanAddr[i], instance->selected, instance->scanValue + i * instance->selected->size(), name + '_' + std::to_string(i));
+		for (size_t i = 0; i < instance->scan.address.size(); i++)
+			instance->entry(instance->scan.address[i], instance->scan.type, instance->scan.value.data() + i * instance->scan.type->size(), name + '_' + std::to_string(i));
 		behavior.response = "entries successfully added to list!";
 	}
 	else if (selected == MenuInstance::Default::custom + 4) {
 		size_t index = 0;
 
 		/* receive the index */
-		if (const char* result = instance->queryIndex("enter the index", index, instance->scanSize)) {
+		if (const char* result = instance->queryIndex("enter the index", index, instance->scan.address.size())) {
 			behavior.response = result;
 			return behavior;
 		}
 
 		/* set the address */
-		instance->dumpAddress = instance->scanAddr[index];
-		if (instance->dumpAddress > 64)
-			instance->dumpAddress -= 64;
+		instance->dump.address = instance->scan.address[index];
+		if (instance->dump.address > 64)
+			instance->dump.address -= 64;
 		else
-			instance->dumpAddress = 0;
-		if (instance->selected->size() == instance->selected->align()) {
+			instance->dump.address = 0;
+		if (instance->scan.type->size() == instance->scan.type->align()) {
 			bool isMultiple = false;
 			for (size_t i = 1; i <= 64; i <<= 1) {
-				if (instance->selected->size() == i) {
+				if (instance->scan.type->size() == i) {
 					isMultiple = true;
 					break;
 				}
 			}
 			if (isMultiple) {
-				instance->dumpType = instance->selected;
+				instance->dump.type = instance->scan.type;
 				behavior.response = "address & type of memory-view set!";
 			}
 			else {
-				instance->dumpType = 0;
+				instance->dump.type = nullptr;
 				behavior.response = "address of memory-view set (type is not suited)!";
 			}
 		}
@@ -1444,17 +1278,17 @@ menu::Behavior PrintPage::evaluate(menu::EntryId selected) {
 		size_t index = 0;
 
 		/* receive the index */
-		if (const char* result = instance->queryIndex("enter the index", index, instance->scanSize)) {
+		if (const char* result = instance->queryIndex("enter the index", index, instance->scan.address.size())) {
 			behavior.response = result;
 			return behavior;
 		}
 
 		/* receive the new value to write */
-		if (!instance->selected->readInput(instance->intermediate, false))
+		if (!instance->scan.type->readInput(instance->tempValue.data(), false))
 			behavior.response = "invalid value!";
 		else {
 			/* try to write the value to memory */
-			if (WriteProcessMemory(instance->process, (void*)instance->scanAddr[index], instance->intermediate, instance->selected->size(), 0))
+			if (WriteProcessMemory(instance->process, (void*)instance->scan.address[index], instance->tempValue.data(), instance->scan.type->size(), nullptr))
 				behavior.response = "value written!";
 			else
 				behavior.response = "writing failed!";
@@ -1491,18 +1325,17 @@ bool EntriesPage::update() {
 			continue;
 
 		/* read the data into a temporary buffer */
-		uint8_t* buffer = (uint8_t*)malloc(entry.datatype->size());
-		if (ReadProcessMemory(instance->process, (void*)entry.address, buffer, entry.datatype->size(), 0)) {
-			if (!entry.datatype->test(buffer, entry.buffer, Datatype::Operation::equal))
+		std::vector<uint8_t> buffer(entry.datatype->size());
+		if (ReadProcessMemory(instance->process, (void*)entry.address, buffer.data(), entry.datatype->size(), nullptr)) {
+			if (!entry.datatype->test(buffer.data(), entry.buffer.data(), Datatype::Operation::equal))
 				pRefresh = true;
 		}
-		free(buffer);
 		if (pRefresh)
 			break;
 	}
 
 	/* check if the screen should be refreshed */
-	return !pRefresh || GetTickCount64() - pStamp < 125;
+	return (!pRefresh || GetTickCount64() - pStamp < 125);
 }
 menu::Layout EntriesPage::construct() {
 	MenuInstance* instance = (MenuInstance*)menu::Page::instance();
@@ -1513,16 +1346,18 @@ menu::Layout EntriesPage::construct() {
 		layout.updateLoop = false;
 
 	/* create the strings */
-	if (instance->entries.size() > 0) {
+	if (instance->entries.empty())
+		layout.header.append("\n\nThere are no entries!");
+	else {
 		/* refresh the values and write the current scan to the output */
 		std::stringstream sstr;
 		for (size_t i = 0; i < instance->entries.size(); i++) {
 			/* read the current value */
 			if (instance->process != INVALID_HANDLE_VALUE) {
 				if (!instance->entries[i].overwrite || !instance->overwrite)
-					ReadProcessMemory(instance->process, (void*)instance->entries[i].address, instance->entries[i].buffer, instance->entries[i].datatype->size(), 0);
+					ReadProcessMemory(instance->process, (void*)instance->entries[i].address, instance->entries[i].buffer.data(), instance->entries[i].datatype->size(), 0);
 				else
-					memcpy(instance->entries[i].buffer, instance->entries[i].writeBuffer, instance->entries[i].datatype->size());
+					memcpy(instance->entries[i].buffer.data(), instance->entries[i].writeBuffer.data(), instance->entries[i].datatype->size());
 			}
 
 			/* add the entry to the result-string */
@@ -1540,17 +1375,17 @@ menu::Layout EntriesPage::construct() {
 			}
 
 			/* write the address to the string */
-			if (instance->moduleOffset != (uint64_t)-1) {
+			if (instance->moduleOffset.has_value()) {
 				if (instance->entries[i].address >= instance->staticSectionStart && instance->entries[i].address < instance->staticSectionEnd)
-					sstr << " [module+0x" << std::hex << (void*)(instance->entries[i].address - instance->moduleOffset) << "] -> ";
+					sstr << " [module+0x" << std::hex << (void*)(instance->entries[i].address - *instance->moduleOffset) << "] -> ";
 				else
 					sstr << "  [base+0x" << std::hex << (void*)instance->entries[i].address << "]  -> ";
 			}
 			else
-				sstr << " [0x" << std::hex << (void*)instance->scanAddr[i] << "] -> ";
+				sstr << " [0x" << std::hex << (void*)instance->scan.address[i] << "] -> ";
 
 			/* write the address and the value to the string */
-			sstr << instance->entries[i].datatype->toString(instance->entries[i].buffer) << std::endl;
+			sstr << instance->entries[i].datatype->toString(instance->entries[i].buffer.data()) << std::endl;
 		}
 		layout.header.append("\n\n").append(sstr.str());
 
@@ -1566,8 +1401,6 @@ menu::Layout EntriesPage::construct() {
 		layout.add(MenuInstance::Default::custom + 2, "toggle overwrite");
 		layout.add(MenuInstance::Default::custom + 4, "rename");
 	}
-	else
-		layout.header.append("\n\nThere are no entries!");
 	layout.add(MenuInstance::Default::custom + 6, "add value by address");
 
 	/* reset the refresh-data */
@@ -1597,8 +1430,6 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 
 		/* remove the entry */
 		EnterCriticalSection(&instance->mutex);
-		free(instance->entries[index].buffer);
-		free(instance->entries[index].writeBuffer);
 		instance->entries.erase(instance->entries.begin() + index);
 		behavior.response = "entry removed!";
 		LeaveCriticalSection(&instance->mutex);
@@ -1619,7 +1450,7 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 			behavior.response = "entry overwriting disabled!";
 		}
 		else {
-			memcpy(instance->entries[index].writeBuffer, instance->entries[index].buffer, instance->entries[index].datatype->size());
+			instance->entries[index].writeBuffer = instance->entries[index].buffer;
 			instance->entries[index].overwrite = true;
 			behavior.response = "entry overwriting enabled!";
 		}
@@ -1638,16 +1469,16 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 		EnterCriticalSection(&instance->mutex);
 
 		/* receive the new value to write */
-		if (!instance->entries[index].datatype->readInput(instance->entries[index].writeBuffer, false))
+		if (!instance->entries[index].datatype->readInput(instance->entries[index].writeBuffer.data(), false))
 			behavior.response = "invalid value!";
 		else {
 			/* try to write the value to memory */
 			if (instance->overwrite && instance->entries[index].overwrite) {
-				memcpy(instance->entries[index].buffer, instance->entries[index].writeBuffer, instance->entries[index].datatype->size());
+				instance->entries[index].buffer = instance->entries[index].writeBuffer;
 				behavior.response = "value written!";
 			}
-			else if (WriteProcessMemory(instance->process, (void*)instance->entries[index].address, instance->entries[index].writeBuffer, instance->entries[index].datatype->size(), 0)) {
-				memcpy(instance->entries[index].buffer, instance->entries[index].writeBuffer, instance->entries[index].datatype->size());
+			else if (WriteProcessMemory(instance->process, (void*)instance->entries[index].address, instance->entries[index].writeBuffer.data(), instance->entries[index].datatype->size(), nullptr)) {
+				instance->entries[index].buffer = instance->entries[index].writeBuffer;
 				behavior.response = "value written!";
 			}
 			else
@@ -1679,11 +1510,11 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 		}
 
 		/* set the address */
-		instance->dumpAddress = instance->entries[index].address;
-		if (instance->dumpAddress > 64)
-			instance->dumpAddress -= 64;
+		instance->dump.address = instance->entries[index].address;
+		if (instance->dump.address > 64)
+			instance->dump.address -= 64;
 		else
-			instance->dumpAddress = 0;
+			instance->dump.address = 0;
 		if (instance->entries[index].datatype->size() == instance->entries[index].datatype->align()) {
 			bool isMultiple = false;
 			for (size_t i = 1; i <= 64; i <<= 1) {
@@ -1693,11 +1524,11 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 				}
 			}
 			if (isMultiple) {
-				instance->dumpType = instance->entries[index].datatype;
+				instance->dump.type = instance->entries[index].datatype;
 				behavior.response = "address & type of memory-view set!";
 			}
 			else {
-				instance->dumpType = 0;
+				instance->dump.type = nullptr;
 				behavior.response = "address of memory-view set (type is not suited)!";
 			}
 		}
@@ -1708,19 +1539,19 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 	}
 	else if (selected == MenuInstance::Default::custom + 6) {
 		/* receive the address */
-		uint64_t address = 0;
+		uintptr_t address = 0;
 		if (!menu::Page::host()->getNumber("enter the address", address, true)) {
 			behavior.response = "invalid number!";
 			return behavior;
 		}
 
 		/* receive the datatype */
-		for (size_t i = 0; i < instance->types.size(); i++)
-			std::cout << "[" << (instance->types.size() >= 10 && i < 10 ? "0" : "") << std::dec << i << "] - " << instance->types[i]->name() << std::endl;
+		for (size_t i = 0; i < instance->typeList.size(); i++)
+			std::cout << "[" << (instance->typeList.size() >= 10 && i < 10 ? "0" : "") << std::dec << i << "] - " << instance->typeList[i]->name() << std::endl;
 
 		/* receive the index */
 		size_t index = 0;
-		if (const char* result = instance->queryIndex("select the datatype", index, instance->types.size())) {
+		if (const char* result = instance->queryIndex("select the datatype", index, instance->typeList.size())) {
 			behavior.response = result;
 			return behavior;
 		}
@@ -1728,7 +1559,7 @@ menu::Behavior EntriesPage::evaluate(menu::EntryId selected) {
 
 
 		/* add the entry */
-		instance->entry(address, instance->types[index], 0);
+		instance->entry(address, instance->typeList[index].get(), 0);
 		behavior.response = "entry successfully added to list!";
 	}
 	else {
@@ -1758,18 +1589,18 @@ bool DumpPage::update() {
 
 	/* read the memory and check if the data have changed */
 	uint8_t buffer[256] = { 0 };
-	if (ReadProcessMemory(instance->process, (void*)instance->dumpAddress, buffer, 256, 0)) {
+	if (ReadProcessMemory(instance->process, (void*)instance->dump.address, buffer, 256, nullptr)) {
 		if (!pScanValid)
 			pRefresh = (pScanValid = true);
-		else if (instance->dumpType == 0) {
+		else if (instance->dump.type == nullptr) {
 			if (memcmp(buffer, pBuffer, 256) != 0)
 				pRefresh = true;
 		}
 
 		/* check if any of the values have changed */
 		else {
-			for (size_t i = 0; i < 256; i += instance->dumpType->size()) {
-				if (instance->dumpType->test(buffer + i, pBuffer + i, Datatype::Operation::equal))
+			for (size_t i = 0; i < 256; i += instance->dump.type->size()) {
+				if (instance->dump.type->test(buffer + i, pBuffer + i, Datatype::Operation::equal))
 					continue;
 				pRefresh = true;
 				break;
@@ -1792,7 +1623,7 @@ menu::Layout DumpPage::construct() {
 
 	/* add the default-entries */
 	layout.add(MenuInstance::Default::custom + 8, "select datatype");
-	if (instance->dumpType != 0)
+	if (instance->dump.type != nullptr)
 		layout.add(MenuInstance::Default::custom + 9, "change value");
 	layout.add(MenuInstance::Default::custom + 2, "decrease address");
 	layout.add(MenuInstance::Default::custom + 3, "previous chunk (-256)");
@@ -1801,52 +1632,51 @@ menu::Layout DumpPage::construct() {
 	layout.add(MenuInstance::Default::custom + 5, "next chunk (+128)");
 	layout.add(MenuInstance::Default::custom + 6, "next chunk (+256)");
 	layout.add(MenuInstance::Default::custom + 7, "increase address");
-	if (instance->moduleOffset != (uint64_t)-1)
+	if (instance->moduleOffset.has_value())
 		layout.add(MenuInstance::Default::custom + 11, "dump static memory to file");
 
 	/* align the address to the currently selected type */
-	if (instance->dumpType != 0)
-		instance->dumpAddress -= (instance->dumpAddress % instance->dumpType->size());
+	if (instance->dump.type != nullptr)
+		instance->dump.address -= (instance->dump.address % instance->dump.type->size());
 	else
-		instance->dumpAddress -= (instance->dumpAddress % 8);
+		instance->dump.address -= (instance->dump.address % 8);
 
 	/* read the memory */
-	pScanValid = ReadProcessMemory(instance->process, (void*)instance->dumpAddress, pBuffer, 256, 0);
+	pScanValid = ReadProcessMemory(instance->process, (void*)instance->dump.address, pBuffer, 256, nullptr);
 
 	/* create the header-string */
 	std::stringstream sstr;
-	if (instance->moduleOffset != (uint64_t)-1)
+	if (instance->moduleOffset.has_value())
 		sstr << " ";
-	sstr << "address: 0x" << std::hex << (void*)instance->dumpAddress << std::endl;
+	sstr << "address: 0x" << std::hex << (void*)instance->dump.address << std::endl;
 	layout.header.append("\n\n").append(sstr.str());
 
 	/* add the entries */
-	if (instance->dumpType == 0) {
-
+	if (instance->dump.type == nullptr) {
 		/* create the hex-dump */
 		sstr.str("");
 		sstr.clear();
-		if (instance->moduleOffset != (uint64_t)-1)
+		if (instance->moduleOffset.has_value())
 			sstr << " ";
 
 		/* print the header */
-		if (instance->dumpTypeSpecific == 0)
+		if (instance->dump.format == MenuInstance::DumpFormat::hexDump)
 			sstr << "hex | 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f |" << std::endl;
-		else if (instance->dumpTypeSpecific == 1)
+		else if (instance->dump.format == MenuInstance::DumpFormat::ptr32Dump)
 			sstr << "hex | 00       04       08       0c       |" << std::endl;
 		else
 			sstr << "hex | 00               08               |" << std::endl;
 
 		/* print the separation-line */
-		if (instance->moduleOffset != (uint64_t)-1)
+		if (instance->moduleOffset.has_value())
 			sstr << "-";
 		sstr << "----+-------------------------------------------------+-----------------" << std::endl;
 
 		/* print the separate rows */
 		for (size_t i = 0; i < 16; i++) {
 			/* create the static-data */
-			if (instance->moduleOffset != (uint64_t)-1) {
-				if ((i << 4) + instance->dumpAddress >= instance->staticSectionStart && (i << 4) + instance->dumpAddress < instance->staticSectionEnd)
+			if (instance->moduleOffset.has_value()) {
+				if ((i << 4) + instance->dump.address >= instance->staticSectionStart && (i << 4) + instance->dump.address < instance->staticSectionEnd)
 					sstr << "s";
 				else
 					sstr << "v";
@@ -1856,7 +1686,7 @@ menu::Layout DumpPage::construct() {
 			sstr << ' ' << std::dec << (char)(i < 10 ? ('0' + i) : ('a' + (i - 10))) << '0' << " | ";
 
 			/* add the hex-data */
-			if (instance->dumpTypeSpecific == 0) {
+			if (instance->dump.format == MenuInstance::DumpFormat::hexDump) {
 				for (size_t j = 0; j < 16; j++) {
 					if (pScanValid) {
 						if (pBuffer[(i << 4) + j] >= 0xa0)
@@ -1873,7 +1703,7 @@ menu::Layout DumpPage::construct() {
 						sstr << "?? ";
 				}
 			}
-			else if (instance->dumpTypeSpecific == 1) {
+			else if (instance->dump.format == MenuInstance::DumpFormat::ptr32Dump) {
 				for (size_t j = 0; j < 16; j += 4) {
 					if (pScanValid) {
 						for (size_t k = 0; k < 4; k++) {
@@ -1927,9 +1757,9 @@ menu::Layout DumpPage::construct() {
 	else {
 		/* create the header */
 		std::stringstream sstr;
-		size_t entriesPerLine = (8 / (instance->dumpType->size() > 8 ? 8 : instance->dumpType->size()));
+		size_t entriesPerLine = (8 / (instance->dump.type->size() > 8 ? 8 : instance->dump.type->size()));
 		size_t charsPerEntry = 48 / entriesPerLine;
-		std::string str = instance->dumpType->name();
+		std::string str = instance->dump.type->name();
 		if (str.size() > 10)
 			str.resize(10);
 		else {
@@ -1938,7 +1768,7 @@ menu::Layout DumpPage::construct() {
 		}
 		sstr << str << "|";
 		for (size_t i = 0; i < entriesPerLine; i++) {
-			sstr << "+" << std::dec << i * instance->dumpType->size();
+			sstr << "+" << std::dec << i * instance->dump.type->size();
 			while (sstr.str().size() < 9 + (i + 1) * (charsPerEntry + 1))
 				sstr << " ";
 			sstr << (i + 1 == entriesPerLine ? "\n" : "|");
@@ -1953,11 +1783,11 @@ menu::Layout DumpPage::construct() {
 		sstr << std::endl;
 
 		/* write the memory to the screen */
-		for (size_t i = 0; i < 256; i += entriesPerLine * instance->dumpType->size()) {
+		for (size_t i = 0; i < 256; i += entriesPerLine * instance->dump.type->size()) {
 			/* create the static-data */
-			uint64_t curSize = sstr.str().size();
-			if (instance->moduleOffset != (uint64_t)-1) {
-				if (i + instance->dumpAddress >= instance->staticSectionStart && i + instance->dumpAddress < instance->staticSectionEnd)
+			uintptr_t curSize = sstr.str().size();
+			if (instance->moduleOffset.has_value()) {
+				if (i + instance->dump.address >= instance->staticSectionStart && i + instance->dump.address < instance->staticSectionEnd)
 					sstr << "s ";
 				else
 					sstr << "v ";
@@ -1974,10 +1804,10 @@ menu::Layout DumpPage::construct() {
 				str = "";
 
 				/* create the string */
-				if (!pScanValid || !instance->dumpType->validate(pBuffer + i + j * instance->dumpType->size()))
+				if (!pScanValid || !instance->dump.type->validate(pBuffer + i + j * instance->dump.type->size()))
 					str = "?";
 				else
-					str = instance->dumpType->toString(pBuffer + i + j * instance->dumpType->size());
+					str = instance->dump.type->toString(pBuffer + i + j * instance->dump.type->size());
 
 				/* clip the string and add it to the result */
 				if (str.size() > charsPerEntry)
@@ -2010,46 +1840,46 @@ menu::Behavior DumpPage::evaluate(menu::EntryId selected) {
 
 	/* handle the selection */
 	if (selected == MenuInstance::Default::custom + 1) {
-		uint64_t addr;
+		uintptr_t addr;
 		if (!menu::Page::host()->getNumber("enter a new address", addr, true))
 			behavior.response = "invalid address!";
 		else {
-			instance->dumpAddress = addr;
+			instance->dump.address = addr;
 			behavior.response = "address successfully changed!";
 		}
 	}
 	else if (selected == MenuInstance::Default::custom + 2) {
-		uint64_t offset;
+		uintptr_t offset;
 		if (!menu::Page::host()->getNumber("enter the offset", offset, false))
 			behavior.response = "invalid offset!";
 		else {
 			behavior.response = "address successfully decreased!";
-			instance->dumpAddress -= offset;
+			instance->dump.address -= offset;
 		}
 	}
 	else if (selected == MenuInstance::Default::custom + 3) {
 		behavior.response = "address successfully decreased!";
-		instance->dumpAddress -= 256;
+		instance->dump.address -= 256;
 	}
 	else if (selected == MenuInstance::Default::custom + 4) {
 		behavior.response = "address successfully decreased!";
-		instance->dumpAddress -= 128;
+		instance->dump.address -= 128;
 	}
 	else if (selected == MenuInstance::Default::custom + 5) {
 		behavior.response = "address successfully increased!";
-		instance->dumpAddress += 128;
+		instance->dump.address += 128;
 	}
 	else if (selected == MenuInstance::Default::custom + 6) {
 		behavior.response = "address successfully increased!";
-		instance->dumpAddress += 256;
+		instance->dump.address += 256;
 	}
 	else if (selected == MenuInstance::Default::custom + 7) {
-		uint64_t offset;
+		uintptr_t offset;
 		if (!menu::Page::host()->getNumber("enter the offset", offset, false))
 			behavior.response = "invalid offset!";
 		else {
 			behavior.response = "address successfully increased!";
-			instance->dumpAddress += offset;
+			instance->dump.address += offset;
 		}
 	}
 	else if (selected == MenuInstance::Default::custom + 8) {
@@ -2057,7 +1887,7 @@ menu::Behavior DumpPage::evaluate(menu::EntryId selected) {
 		behavior.target = DumptypePage::Id;
 	}
 	else if (selected == MenuInstance::Default::custom + 9) {
-		uint64_t offset;
+		uintptr_t offset;
 		if (!menu::Page::host()->getNumber("enter the offset in the table", offset, false))
 			behavior.response = "invalid offset!";
 		else {
@@ -2065,25 +1895,24 @@ menu::Behavior DumpPage::evaluate(menu::EntryId selected) {
 				behavior.response = "offset out of range!";
 			else {
 				/* align the index */
-				offset -= (offset % instance->dumpType->size());
+				offset -= (offset % instance->dump.type->size());
 
 				/* receive the new value to write */
-				uint8_t* buffer = (uint8_t*)malloc(instance->dumpType->size());
-				if (!instance->dumpType->readInput(buffer, false))
+				std::vector<uint8_t> buffer(instance->dump.type->size());
+				if (!instance->dump.type->readInput(buffer.data(), false))
 					behavior.response = "invalid value!";
 				else {
 					/* try to write the value to memory */
-					if (WriteProcessMemory(instance->process, (void*)(instance->dumpAddress + offset), buffer, instance->dumpType->size(), 0))
+					if (WriteProcessMemory(instance->process, (void*)(instance->dump.address + offset), buffer.data(), instance->dump.type->size(), nullptr))
 						behavior.response = "value written!";
 					else
 						behavior.response = "writing failed!";
 				}
-				free(buffer);
 			}
 		}
 	}
 	else if (selected == MenuInstance::Default::custom + 10) {
-		uint64_t offset;
+		uintptr_t offset;
 		if (!menu::Page::host()->getNumber("enter the offset in the table", offset, false))
 			behavior.response = "invalid offset!";
 		else {
@@ -2091,10 +1920,10 @@ menu::Behavior DumpPage::evaluate(menu::EntryId selected) {
 				behavior.response = "offset out of range!";
 			else {
 				/* align the index */
-				offset -= (offset % instance->dumpType->size());
+				offset -= (offset % instance->dump.type->size());
 
 				/* add the entry */
-				instance->entry(instance->dumpAddress + offset, instance->dumpType, pBuffer + offset);
+				instance->entry(instance->dump.address + offset, instance->dump.type, pBuffer + offset);
 				behavior.response = "entry successfully added to list!";
 			}
 		}
@@ -2114,26 +1943,34 @@ menu::Behavior DumpPage::evaluate(menu::EntryId selected) {
 			else {
 
 				/* read the memory */
-				uint8_t* buffer = (uint8_t*)malloc(instance->staticSectionEnd - instance->staticSectionStart);
-				if (ReadProcessMemory(instance->process, (void*)instance->staticSectionStart, buffer, instance->staticSectionEnd - instance->staticSectionStart, 0) == 0) {
+				std::vector<uint8_t> buffer(instance->staticSectionEnd - instance->staticSectionStart);
+				if (ReadProcessMemory(instance->process, (void*)instance->staticSectionStart, buffer.data(), instance->staticSectionEnd - instance->staticSectionStart, nullptr) == 0) {
 					behavior.response = "failed to read the memory!";
 				}
 				else {
+					/* extract the format-specific size */
+					uintptr_t typeSize = 1;
+					if (instance->dump.type != nullptr)
+						typeSize = instance->dump.type->size();
+					else if (instance->dump.format == MenuInstance::DumpFormat::ptr32Dump)
+						typeSize = 4;
+					else if (instance->dump.format == MenuInstance::DumpFormat::ptr64Dump)
+						typeSize = 8;
+
 					/* print the data to the file */
-					uint64_t typeSize = (instance->dumpType == 0 ? (instance->dumpTypeSpecific == 0 ? 1 : (instance->dumpTypeSpecific == 1 ? 4 : 8)) : instance->dumpType->size());
-					uint64_t limit = instance->staticSectionEnd - instance->staticSectionStart - typeSize;
-					for (uint64_t i = 0; i <= limit; i += typeSize) {
+					uintptr_t limit = instance->staticSectionEnd - instance->staticSectionStart - typeSize;
+					for (uintptr_t i = 0; i <= limit; i += typeSize) {
 						if ((i & 0x1f) == 0) {
 							if (i)
 								file << std::endl;
-							file << "[module+0x" << (void*)(i + instance->staticSectionStart - instance->moduleOffset) << "] - ";
+							file << "[module+0x" << (void*)(i + instance->staticSectionStart - *instance->moduleOffset) << "] - ";
 						}
 						std::stringstream sstr;
-						if (instance->dumpType != 0) {
-							if (!instance->dumpType->validate(buffer + i))
+						if (instance->dump.type != nullptr) {
+							if (!instance->dump.type->validate(buffer.data() + i))
 								sstr << "?";
 							else
-								sstr << instance->dumpType->toString(buffer + i);
+								sstr << instance->dump.type->toString(buffer.data() + i);
 							if (std::string str = sstr.str(); str.size() > 12) {
 								str.resize(12);
 								sstr.str(str);
@@ -2158,8 +1995,7 @@ menu::Behavior DumpPage::evaluate(menu::EntryId selected) {
 					}
 				}
 
-				/* clsoe the resources */
-				free(buffer);
+				/* close the resources */
 				file.close();
 				behavior.response = "dump successfully written!";
 			}
@@ -2191,13 +2027,13 @@ menu::Layout DumptypePage::construct() {
 	layout.add(MenuInstance::Default::custom + 3, "Ptr64");
 
 	/* add the datatypes */
-	for (size_t i = 0; i < instance->types.size(); i++) {
+	for (size_t i = 0; i < instance->typeList.size(); i++) {
 		/* check if the type is valid */
-		if (instance->types[i]->align() == instance->types[i]->size()) {
+		if (instance->typeList[i]->align() == instance->typeList[i]->size()) {
 			/* check if the size is a multiple of two */
 			bool isMultiple = false;
 			for (size_t j = 1; j <= 64; j <<= 1) {
-				if (instance->types[i]->size() == j) {
+				if (instance->typeList[i]->size() == j) {
 					isMultiple = true;
 					break;
 				}
@@ -2205,7 +2041,7 @@ menu::Layout DumptypePage::construct() {
 
 			/* add the type */
 			if (isMultiple)
-				layout.add(MenuInstance::Default::custom + 4 + i, std::string("datatype: ").append(instance->types[i]->name()));
+				layout.add(MenuInstance::Default::custom + 4 + i, std::string("datatype: ").append(instance->typeList[i]->name()));
 		}
 	}
 
@@ -2222,19 +2058,19 @@ menu::Behavior DumptypePage::evaluate(menu::EntryId selected) {
 
 	/* handle the selection */
 	if (selected == MenuInstance::Default::custom + 1) {
-		instance->dumpType = 0;
-		instance->dumpTypeSpecific = 0;
+		instance->dump.type = nullptr;
+		instance->dump.format = MenuInstance::DumpFormat::hexDump;
 	}
 	else if (selected == MenuInstance::Default::custom + 2) {
-		instance->dumpType = 0;
-		instance->dumpTypeSpecific = 1;
+		instance->dump.type = nullptr;
+		instance->dump.format = MenuInstance::DumpFormat::ptr32Dump;
 	}
 	else if (selected == MenuInstance::Default::custom + 3) {
-		instance->dumpType = 0;
-		instance->dumpTypeSpecific = 2;
+		instance->dump.type = nullptr;
+		instance->dump.format = MenuInstance::DumpFormat::ptr64Dump;
 	}
 	else
-		instance->dumpType = instance->types[selected - MenuInstance::Default::custom - 4];
+		instance->dump.type = instance->typeList[selected - MenuInstance::Default::custom - 4].get();
 	behavior.response = "datatype successfully changed!";
 	return behavior;
 }

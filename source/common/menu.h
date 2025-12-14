@@ -8,8 +8,14 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <optional>
+#include <thread>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 #define NOMINMAX
 #include <Windows.h>
+#include <Psapi.h>
 
 /* define the global menu instance */
 class MenuInstance : public menu::Instance {
@@ -17,16 +23,18 @@ public:
 	enum class MemoryMode : uint8_t {
 		memAll, memVolatile, memStatic
 	};
+	enum class DumpFormat : uint8_t {
+		hexDump,
+		ptr32Dump,
+		ptr64Dump
+	};
 	struct Entry {
-		uint8_t* buffer;
-		uint8_t* writeBuffer;
-		uint64_t address;
-		Datatype* datatype;
-		bool overwrite;
 		std::string name;
-
-	public:
-		Entry();
+		std::vector<uint8_t> buffer;
+		std::vector<uint8_t> writeBuffer;
+		Datatype* datatype = nullptr;
+		uintptr_t address = 0;
+		bool overwrite = false;
 	};
 	struct Default {
 		static constexpr menu::EntryId exit = 1;
@@ -36,29 +44,29 @@ public:
 	};
 
 public:
-	MemoryMode memoryMode;
+	MemoryMode memoryMode = MemoryMode::memStatic;
 	std::string processName;
-	volatile HANDLE process;
-	volatile bool overwrite;
-	uint64_t moduleOffset;
-	uint64_t staticSectionStart;
-	uint64_t staticSectionEnd;
-	std::vector<Datatype*> types;
+	volatile HANDLE process = INVALID_HANDLE_VALUE;
+	volatile bool overwrite = false;
+	std::optional<uintptr_t> moduleOffset;
+	uintptr_t staticSectionStart = 0;
+	uintptr_t staticSectionEnd = 0;
+	std::vector<std::unique_ptr<Datatype>> typeList;
 	std::vector<Entry> entries;
-	Datatype* selected;
-	uint8_t* intermediate;
-	uint64_t* scanAddr;
-	uint8_t* scanValue;
-	size_t scanSize;
-	Datatype* dumpType;
-	uint64_t dumpAddress;
-	uint8_t dumpTypeSpecific;
-	CRITICAL_SECTION mutex;
-	HANDLE thread;
-	volatile uint8_t threadState;
-
-public:
-	MenuInstance();
+	std::vector<uint8_t> tempValue;
+	struct {
+		Datatype* type = nullptr;
+		std::vector<uintptr_t> address;
+		std::vector<uint8_t> value;
+	} scan;
+	struct {
+		Datatype* type = nullptr;
+		uintptr_t address = 0;
+		DumpFormat format = DumpFormat::hexDump;
+	} dump;
+	CRITICAL_SECTION mutex = { 0 };
+	std::thread thread;
+	volatile bool threadTerminate = false;
 
 public:
 	virtual void init() override;
@@ -68,7 +76,7 @@ public:
 public:
 	menu::Layout layout(const char* current, bool update);
 	bool eval(menu::EntryId selected, menu::Behavior* behavior);
-	Entry& entry(uint64_t address, Datatype* type, const uint8_t* buffer, std::string name = "");
+	Entry& entry(uintptr_t address, Datatype* type, const uint8_t* buffer, std::string name = "");
 	const char* queryIndex(const std::string& text, size_t& index, size_t limit);
 
 public:
@@ -78,8 +86,8 @@ public:
 	const char* scanData(Datatype::Operation operation, bool self);
 
 public:
-	std::ostream& printIndex(std::ostream& stream, uint64_t index);
-	static DWORD __stdcall globalThread(void* ptr);
+	std::ostream& printIndex(std::ostream& stream, uintptr_t index);
+	void globalThread();
 };
 
 /* define the root page */
@@ -225,7 +233,7 @@ private:
 	using menu::Page::Page;
 
 private:
-	uint64_t pStamp;
+	uintptr_t pStamp;
 	bool pRefresh;
 
 public:
@@ -248,7 +256,7 @@ private:
 	using menu::Page::Page;
 
 private:
-	uint64_t pStamp;
+	uintptr_t pStamp;
 	bool pRefresh;
 
 public:
@@ -271,7 +279,7 @@ private:
 	using menu::Page::Page;
 
 private:
-	uint64_t pStamp;
+	uintptr_t pStamp;
 	bool pRefresh;
 
 public:
@@ -294,7 +302,7 @@ private:
 	using menu::Page::Page;
 
 private:
-	uint64_t pStamp;
+	uintptr_t pStamp;
 	bool pRefresh;
 	bool pScanValid;
 	uint8_t pBuffer[256];
